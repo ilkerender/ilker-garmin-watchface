@@ -1,0 +1,6 @@
+{
+    "monkeyC.jungleFiles": "monkey.jungle",
+    "monkeyC.typeCheckLevel": "Strict",
+    "monkeyC.buildForDevice": "venu3s",
+    "monkeyC.outputPath": "bin"
+}

@@ -1,0 +1,6 @@
+bin/
+*.prg
+*.iq
+*.der
+*.pvs
+.vscode/launch.json
