@@ -1,5 +1,9 @@
 # Tactical Grid — Garmin Venu 3S Watch Face
 
+Hey, my name is Ilker and this is my watch face. I've always loved uncluttered watch faces that just give me the right data — nothing more, nothing less. Feel free to customize it and make it your own.
+
+---
+
 A minimalist, AMOLED-optimised watch face for the **Garmin Venu 3S** built with the Connect IQ SDK. Pure black background, white data, surgical layout — everything you need at a glance, nothing you don't.
 
 ## Screenshots
