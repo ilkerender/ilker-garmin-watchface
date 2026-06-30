@@ -79,11 +79,29 @@ Dimmed time + date only, with per-minute pixel shift for burn-in protection.
 - **Graceful fallbacks** — every metric degrades to `--` rather than crashing
 - **Strict type safety** — compiled with `monkeyC.typeCheckLevel: Strict`
 
-## Requirements
+## Supported devices
+
+All 59 round-screen Garmin watches with Connect IQ API 5.0+. The layout is fully dynamic — it adapts to any screen size from 208×208 to 454×454. Graceful fallbacks mean features like body battery, sleep score, and HRV simply show `--` on watches that don't have the relevant sensors.
+
+| Family | Models |
+|--------|--------|
+| **Venu** | Venu® 2, 2 Plus, 2S · Venu® 3, 3S · Venu® 4 41mm, 4 45mm · vívoactive® 5, 6 |
+| **Forerunner** | 165, 165 Music · 170, 170 Music · 255, 255 Music, 255s, 255s Music · 265, 265s · 570 42mm, 570 47mm · 70 · 955, 965, 970 |
+| **fēnix** | 7, 7 Pro, 7 Pro Solar · 7S, 7S Pro · 7X, 7X Pro, 7X Pro Solar · 8 43mm · 8 47mm/51mm · 8 Pro · 8 Solar 47mm, 8 Solar 51mm · E |
+| **epix** | epix (Gen 2) · epix Pro 42mm, 47mm, 51mm |
+| **MARQ** | MARQ (Gen 2) · MARQ (Gen 2) Aviator |
+| **D2** | D2 Air X10 · D2 Mach 1, Mach 2, Mach 2 Pro |
+| **Instinct** | Instinct 3 AMOLED 45mm, 50mm · Instinct Crossover AMOLED |
+| **Approach** | Approach S50 · S70 42mm, S70 47mm |
+| **Descent** | Descent G2 · Mk3 43mm, Mk3i 51mm |
+| **Enduro** | Enduro 3 |
+
+> Devices with API level below 5.0 (fēnix 5/6, Forerunner 245/745, vivoactive 3/4, older Venu/MARQ) are excluded — they predate the API features this face relies on.
+
+## Build requirements
 
 | Item | Version |
 |------|---------|
-| Target device | Garmin Venu 3S |
 | Connect IQ SDK | 9.2.0+ |
 | Min API level | 4.0.0 |
 
