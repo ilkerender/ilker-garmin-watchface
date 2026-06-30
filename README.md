@@ -6,6 +6,36 @@ Hey, my name is Ilker and this is my watch face. I've always loved uncluttered w
 
 A minimalist, AMOLED-optimised watch face for the **Garmin Venu 3S** built with the Connect IQ SDK. Pure black background, white data, surgical layout — everything you need at a glance, nothing you don't.
 
+## Install on your watch (no coding required)
+
+You need a **Garmin Venu 3S**. No computer tools, no accounts — just a USB cable.
+
+**Step 1 — Download the file**
+
+Download [`venu3swatchface.prg`](venu3swatchface.prg) from this page.
+(Click the filename → click the download button in the top-right corner of the file preview.)
+
+**Step 2 — Connect your watch**
+
+Plug your Venu 3S into your computer with its USB charging cable. Your watch will appear as a drive — like a USB stick — in Finder (Mac) or File Explorer (Windows).
+
+**Step 3 — Copy the file**
+
+Open the watch drive and navigate to:
+```
+GARMIN → Apps
+```
+Drag `venu3swatchface.prg` into that folder.
+
+**Step 4 — Eject and select**
+
+Safely eject the watch, then on the watch go to:
+**Settings → Watch Face** (or long-press the current watch face) and pick **Tactical Grid**.
+
+That's it.
+
+---
+
 ## Screenshots
 
 | Simulator | On the Wrist |
@@ -56,6 +86,7 @@ Dimmed time + date only, with per-minute pixel shift for burn-in protection.
 ### Permissions used
 - `SensorHistory` — body battery, HRV/stress
 - `ComplicationSubscriber` — sleep score
+- `UserProfile` — resting heart rate for dot colours
 
 ## Building
 
