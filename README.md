@@ -50,6 +50,10 @@ Seven dots — one per day, today on the right — give you a week-at-a-glance h
 - **Top half** — Resting heart rate colour: green `< 57 bpm` · yellow `57–59` · red `≥ 60`
 - **Bottom half** — Green when the day's step goal was met, or ≥ 5 vigorous / ≥ 20 moderate active minutes logged
 
+> **Two things to know about the RHR dot colours:**
+> - **Fills in over time.** The watch records each day's RHR locally as you wear it. Past dots have no colour on a fresh install and gain colour going forward — expect a full week of colour after about seven days of wear.
+> - **Approximation.** The value used is Garmin's `averageRestingHeartRate` (a rolling average), not the exact per-night RHR shown in the Garmin app. It's close, but not identical.
+
 ### Top metrics
 | Left | Centre | Right |
 |------|--------|-------|

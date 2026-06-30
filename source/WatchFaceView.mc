@@ -1,4 +1,5 @@
 import Toybox.Activity;
+import Toybox.Application.Storage;
 import Toybox.UserProfile;
 import Toybox.Graphics;
 import Toybox.Lang;
@@ -52,6 +53,10 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _yBotLbl  as Number = 328;
 
     private var _isAwake as Boolean = true;
+
+    // RHR history — persisted daily in Application.Storage
+    private const RHR_KEY  as String            = "rhrHist";
+    private var   _rhrHist as Dictionary or Null = null;
 
     // Last-known-good sensor values, to ride out SensorHistory gaps
     private var _bodyBatt   as Number? = null;
@@ -174,7 +179,8 @@ class WatchFaceView extends WatchUi.WatchFace {
         return Math.sqrt(v).toNumber();
     }
 
-    public function onExitSleep() as Void { _isAwake = true; }
+    public function onShow() as Void { loadRhrHist(); }
+    public function onExitSleep() as Void { _isAwake = true; loadRhrHist(); }
     public function onEnterSleep() as Void { _isAwake = false; }
 
     public function setSleepScore(v as Number) as Void {
@@ -196,6 +202,7 @@ class WatchFaceView extends WatchUi.WatchFace {
     }
 
     private function drawFullFace(dc as Dc, is24h as Boolean, distanceUnits as System.UnitsSystem) as Void {
+        recordTodayRhr();
         var actInfo = ActivityMonitor.getInfo();
         drawHeader(dc);
         drawTopMetrics(dc, actInfo, distanceUnits);
@@ -264,8 +271,8 @@ class WatchFaceView extends WatchUi.WatchFace {
                     if (rec != null) {
                         if (rec.steps    instanceof Number) { steps    = rec.steps    as Number; }
                         if (rec.stepGoal instanceof Number) { stepGoal = rec.stepGoal as Number; }
-                        if ((rec has :restingHeartRate) && rec.restingHeartRate instanceof Number) {
-                            restHR = rec.restingHeartRate as Number;
+                        if (rec.startOfDay instanceof Time.Moment) {
+                            restHR = rhrForDay(rec.startOfDay as Time.Moment);
                         }
                         if (rec has :activeMinutes) {
                             var recMin = rec.activeMinutes;
@@ -533,6 +540,58 @@ class WatchFaceView extends WatchUi.WatchFace {
             return _stress;
         }
         return null;
+    }
+
+    private function dayKey(m as Time.Moment) as String {
+        var g = Gregorian.info(m, Time.FORMAT_SHORT);
+        return (g.year  as Number).format("%04d")
+             + (g.month as Number).format("%02d")
+             + (g.day   as Number).format("%02d");
+    }
+
+    private function loadRhrHist() as Void {
+        var v = Storage.getValue(RHR_KEY);
+        _rhrHist = (v instanceof Dictionary) ? (v as Dictionary) : ({} as Dictionary);
+    }
+
+    private function readCurrentRhr() as Number? {
+        var prof = UserProfile.getProfile();
+        if ((prof has :averageRestingHeartRate) && prof.averageRestingHeartRate instanceof Number) {
+            var rhr = prof.averageRestingHeartRate as Number;
+            if (rhr > 0) { return rhr; }
+        }
+        if ((prof has :restingHeartRate) && prof.restingHeartRate instanceof Number) {
+            var rhr = prof.restingHeartRate as Number;
+            if (rhr > 0) { return rhr; }
+        }
+        return null;
+    }
+
+    private function recordTodayRhr() as Void {
+        if (_rhrHist == null) { loadRhrHist(); }
+        var d   = _rhrHist as Dictionary;
+        var key = dayKey(Time.now());
+        if (d.hasKey(key)) { return; }
+
+        var rhr = readCurrentRhr();
+        if (rhr == null) { return; }
+
+        d.put(key, rhr as Number);
+
+        var cutoff = dayKey(new Time.Moment(Time.now().value() - 8 * 86400));
+        var keys = d.keys();
+        for (var i = 0; i < keys.size(); i += 1) {
+            var k = keys[i] as String;
+            if (k.compareTo(cutoff) < 0) { d.remove(k); }
+        }
+        Storage.setValue(RHR_KEY, d as Dictionary<Storage.KeyType, Storage.ValueType>);
+        _rhrHist = d;
+    }
+
+    private function rhrForDay(m as Time.Moment) as Number {
+        if (_rhrHist == null) { loadRhrHist(); }
+        var v = (_rhrHist as Dictionary).get(dayKey(m));
+        return (v instanceof Number) ? (v as Number) : -1;
     }
 
     private function getHrStr() as String {
