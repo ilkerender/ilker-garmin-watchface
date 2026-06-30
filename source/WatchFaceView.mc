@@ -1,4 +1,5 @@
 import Toybox.Activity;
+import Toybox.UserProfile;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.Math;
@@ -7,7 +8,6 @@ import Toybox.Time;
 import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 import Toybox.ActivityMonitor;
-import Toybox.Complications;
 import Toybox.SensorHistory;
 
 class WatchFaceView extends WatchUi.WatchFace {
@@ -19,7 +19,8 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const C_ICON    as Number = 0xB0B0B0;
     private const C_DIVIDER as Number = 0x2E2E2E;
     private const C_AOD     as Number = 0xAAAAAA;
-    private const C_BATTLOW as Number = 0xAA2222;
+    private const C_RED     as Number = 0xAA2222;
+    private const C_BATTLOW as Number = C_RED;
 
     // ── Screen geometry (resolved in onLayout) ─────────────────────────────
     private var _w as Number = 390;
@@ -51,11 +52,20 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _yBotLbl  as Number = 328;
 
     private var _isAwake as Boolean = true;
-    private var _sleepId as Complications.Id? = null;
 
-    private const PAD as Number = 2;
-    private const GAP as Number = 12; // time block → date stack
-    private const COLGAP as Number = 16; // min clearance between adjacent columns
+    // Last-known-good sensor values, to ride out SensorHistory gaps
+    private var _bodyBatt   as Number? = null;
+    private var _bodyBattAt as Number  = 0;
+    private var _stress     as Number? = null;
+    private var _stressAt   as Number  = 0;
+    private var _sleep      as Number? = null;
+    private var _sleepAt    as Number  = 0;
+    private const STALE_SECS as Number = 7200;
+
+    private const PAD     as Number = 2;
+    private const GAP     as Number = 12;
+    private const COLGAP  as Number = 16;
+    private const DAY_NAMES as Array<String> = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as Array<String>;
 
     public function initialize() {
         WatchFace.initialize();
@@ -113,16 +123,10 @@ class WatchFaceView extends WatchUi.WatchFace {
         // Solve each metric band's outer-column offset from measured widths.
         // Top band measured at the values row; bottom at the icon row (lowest).
         var sTop = solveSpread(dc, "88888", "88.88", "8888", _yTopVal, 0, Graphics.FONT_TINY);
-        //var sBot = solveSpread(dc, "88", "888", "100%", _yBotLbl, 15);
         var sBot = 92;
         _cxLtop = _cxM - sTop;  _cxRtop = _cxM + sTop;
         _cxLbot = _cxM - sBot;  _cxRbot = _cxM + sBot;
 
-        // Subscribe to sleep score complication (guard: not all devices support this)
-        if ((Toybox has :Complications) && (Complications has :COMPLICATION_TYPE_SLEEP_SCORE)) {
-            _sleepId = new Complications.Id(Complications.COMPLICATION_TYPE_SLEEP_SCORE);
-            Complications.subscribeToUpdates(_sleepId);
-        }
     }
 
     // Stack height for a candidate time-font height.
@@ -173,47 +177,38 @@ class WatchFaceView extends WatchUi.WatchFace {
     public function onExitSleep() as Void { _isAwake = true; }
     public function onEnterSleep() as Void { _isAwake = false; }
 
+    public function setSleepScore(v as Number) as Void {
+        _sleep   = v;
+        _sleepAt = Time.now().value();
+    }
+
     public function onUpdate(dc as Dc) as Void {
+        var settings      = System.getDeviceSettings();
+        var is24h         = settings.is24Hour;
+        var distanceUnits = settings.distanceUnits;
         dc.setColor(C_BG, C_BG);
         dc.clear();
         if (_isAwake) {
-            drawFullFace(dc);
+            drawFullFace(dc, is24h, distanceUnits);
         } else {
-            drawAOD(dc);
+            drawAOD(dc, is24h);
         }
     }
 
-    public function onPartialUpdate(dc as Dc) as Void {
-        var ct = System.getClockTime();
-        var sx = burnX(ct);
-        var sy = burnY(ct);
-
-        var top   = _yTime - _hTime / 2 - 8;
-        var bandH = _hTime + 16;
-        if (top < 0) { top = 0; }
-        if (top + bandH > _h) { bandH = _h - top; }
-
-        dc.setClip(0, top, _w, bandH);
-        dc.setColor(C_BG, C_BG);
-        dc.clear();
-        drawTimeBand(dc, ct, C_AOD, sx, sy);
-        dc.clearClip();
-    }
-
-    private function drawFullFace(dc as Dc) as Void {
+    private function drawFullFace(dc as Dc, is24h as Boolean, distanceUnits as System.UnitsSystem) as Void {
         var actInfo = ActivityMonitor.getInfo();
         drawHeader(dc);
-        drawTopMetrics(dc, actInfo);
+        drawTopMetrics(dc, actInfo, distanceUnits);
         drawVerticalDividers(dc);
         drawHairline(dc, _yDiv1);
-        drawTimeBand(dc, System.getClockTime(), C_PRIMARY, 0, 0);
+        drawTimeBand(dc, System.getClockTime(), C_PRIMARY, 0, 0, is24h);
         drawHairline(dc, _yDiv2);
         drawBottomMetrics(dc, actInfo);
     }
 
-    private function drawAOD(dc as Dc) as Void {
+    private function drawAOD(dc as Dc, is24h as Boolean) as Void {
         var ct = System.getClockTime();
-        drawTimeBand(dc, ct, C_AOD, burnX(ct), burnY(ct));
+        drawTimeBand(dc, ct, C_AOD, burnX(ct), burnY(ct), is24h);
     }
 
     private function burnX(ct as System.ClockTime) as Number { return (ct.min % 6) - 3; }
@@ -222,7 +217,7 @@ class WatchFaceView extends WatchUi.WatchFace {
     private function drawHeader(dc as Dc) as Void {
         var C_GREEN  = 0x00AA44;
         var C_YELLOW = 0xCCAA00;
-        var C_RED    = 0xAA2222;
+
         var C_RING   = 0x606060; // bright enough to see on real AMOLED
         var C_EMPTY  = 0x1A1A1A; // dim base so the dot shape is always visible
         var dotR     = 8;
@@ -246,18 +241,19 @@ class WatchFaceView extends WatchUi.WatchFace {
                 if (today.steps    instanceof Number) { steps    = today.steps    as Number; }
                 if (today.stepGoal instanceof Number) { stepGoal = today.stepGoal as Number; }
 
-                if ((today has :restingHeartRate) && today.restingHeartRate instanceof Number) {
-                    restHR = today.restingHeartRate as Number;
+                var prof = UserProfile.getProfile();
+                if ((prof has :averageRestingHeartRate) && prof.averageRestingHeartRate instanceof Number) {
+                    var rhr = prof.averageRestingHeartRate as Number;
+                    if (rhr > 0) { restHR = rhr; }
+                } else if ((prof has :restingHeartRate) && prof.restingHeartRate instanceof Number) {
+                    var rhr = prof.restingHeartRate as Number;
+                    if (rhr > 0) { restHR = rhr; }
                 }
-                if (today has :activeMinutes) {
-                    var actMin = today.activeMinutes;
+                if (today has :activeMinutesDay) {
+                    var actMin = today.activeMinutesDay;
                     if (actMin != null) {
-                        if ((actMin has :vigorous) && actMin.vigorous instanceof Number) {
-                            vigorousMin = actMin.vigorous as Number;
-                        }
-                        if ((actMin has :moderate) && actMin.moderate instanceof Number) {
-                            moderateMin = actMin.moderate as Number;
-                        }
+                        if (actMin.vigorous instanceof Number) { vigorousMin = actMin.vigorous as Number; }
+                        if (actMin.moderate instanceof Number) { moderateMin = actMin.moderate as Number; }
                     }
                 }
             } else {
@@ -370,7 +366,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         dc.drawLine(_cxM - inset, y, _cxM + inset, y);
     }
 
-    private function drawTopMetrics(dc as Dc, info as ActivityMonitor.Info) as Void {
+    private function drawTopMetrics(dc as Dc, info as ActivityMonitor.Info, distanceUnits as System.UnitsSystem) as Void {
         dc.setColor(C_LABEL, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cxLtop, _yTopLbl, Graphics.FONT_XTINY, "STP",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
@@ -384,17 +380,17 @@ class WatchFaceView extends WatchUi.WatchFace {
         dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cxLtop, _yTopVal, Graphics.FONT_TINY, stepsStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(_cxM, _yTopVal, Graphics.FONT_TINY, buildDistStr(info),
+        dc.drawText(_cxM, _yTopVal, Graphics.FONT_TINY, buildDistStr(info, distanceUnits),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.drawText(_cxRtop, _yTopVal, Graphics.FONT_TINY, getBodyBatteryStr(),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     private function drawTimeBand(dc as Dc, clockTime as System.ClockTime,
-                                  timeColor as Number, xShift as Number, yShift as Number) as Void {
-        var hour  = clockTime.hour;
-        var min   = clockTime.min;
-        var is24h = System.getDeviceSettings().is24Hour;
+                                  timeColor as Number, xShift as Number, yShift as Number,
+                                  is24h as Boolean) as Void {
+        var hour = clockTime.hour;
+        var min  = clockTime.min;
 
         if (!is24h) {
             if (hour == 0)      { hour = 12; }
@@ -402,10 +398,9 @@ class WatchFaceView extends WatchUi.WatchFace {
         }
         var timeStr = hour.format(is24h ? "%02d" : "%d") + ":" + min.format("%02d");
 
-        var today    = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
-        var dayNames = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as Array<String>;
-        var dowIdx   = (today.day_of_week instanceof Number) ? (today.day_of_week as Number) - 1 : 0;
-        var dow      = dayNames[dowIdx];
+        var today  = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
+        var dowIdx = (today.day_of_week instanceof Number) ? (today.day_of_week as Number) - 1 : 0;
+        var dow    = DAY_NAMES[dowIdx];
         var dom      = (today.day instanceof Number) ? (today.day as Number).format("%d") : "--";
 
         var timeW = dc.getTextWidthInPixels(timeStr, _timeFont);
@@ -432,21 +427,15 @@ class WatchFaceView extends WatchUi.WatchFace {
         var sleepStr  = "--";
         var showStress = false;
 
-        if (_sleepId != null) {
-            var comp = Complications.getComplication(_sleepId);
-            var val  = comp.value;
-            if (val instanceof Number) { sleepStr = (val as Number).format("%d"); }
+        if (_sleep != null && (Time.now().value() - _sleepAt) < STALE_SECS) {
+            sleepStr = (_sleep as Number).format("%d");
         }
 
         if (sleepStr.equals("--")) {
-            // Fallback: stress score from SensorHistory (0-100, HRV-derived)
-            if ((Toybox has :SensorHistory) && (SensorHistory has :getStressHistory)) {
-                var iter   = SensorHistory.getStressHistory({:period => 1, :order => SensorHistory.ORDER_NEWEST_FIRST});
-                var sample = iter.next();
-                if (sample != null && sample.data != null) {
-                    sleepStr  = (sample.data as Number).format("%d");
-                    showStress = true;
-                }
+            var stress = getStressVal();
+            if (stress != null) {
+                sleepStr   = (stress as Number).format("%d");
+                showStress = true;
             }
         }
 
@@ -487,23 +476,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         dc.fillCircle(cx + ox, cy + oy, ro);
     }
 
-    private function drawConnIcons(dc as Dc, cx as Number, cy as Number, btOn as Boolean) as Void {
-        var bx = cx - 14;
-        dc.setColor(btOn ? C_ICON : C_LABEL, Graphics.COLOR_TRANSPARENT);
-        dc.drawLine(bx, cy - 8, bx, cy + 8);
-        dc.drawLine(bx, cy - 8, bx + 6, cy - 3);
-        dc.drawLine(bx + 6, cy - 3, bx, cy + 2);
-        dc.drawLine(bx, cy + 2, bx + 6, cy + 7);
-        dc.drawLine(bx + 6, cy + 7, bx, cy + 12);
 
-        var ex = cx + 6;
-        var ew = 14; var eh = 10;
-        var ex0 = ex - ew / 2; var ey0 = cy - eh / 2;
-        dc.setColor(C_ICON, Graphics.COLOR_TRANSPARENT);
-        dc.drawRectangle(ex0, ey0, ew, eh);
-        dc.drawLine(ex0, ey0, ex, ey0 + 5);
-        dc.drawLine(ex, ey0 + 5, ex0 + ew, ey0);
-    }
 
     private function drawBatteryIcon(dc as Dc, cx as Number, cy as Number, pct as Number) as Void {
         var bw = 24; var bh = 10;
@@ -518,15 +491,48 @@ class WatchFaceView extends WatchUi.WatchFace {
         }
     }
 
-    private function getBodyBatteryStr() as String {
+    private function readBodyBattery() as Number? {
         if ((Toybox has :SensorHistory) && (SensorHistory has :getBodyBatteryHistory)) {
             var iter   = SensorHistory.getBodyBatteryHistory({:period => 1, :order => SensorHistory.ORDER_NEWEST_FIRST});
             var sample = iter.next();
-            if (sample != null && sample.data != null) {
-                return (sample.data as Number).format("%d");
-            }
+            if (sample != null && sample.data != null) { return sample.data as Number; }
+        }
+        return null;
+    }
+
+    private function readStress() as Number? {
+        if ((Toybox has :SensorHistory) && (SensorHistory has :getStressHistory)) {
+            var iter   = SensorHistory.getStressHistory({:period => 1, :order => SensorHistory.ORDER_NEWEST_FIRST});
+            var sample = iter.next();
+            if (sample != null && sample.data != null) { return sample.data as Number; }
+        }
+        return null;
+    }
+
+    private function getBodyBatteryStr() as String {
+        var fresh = readBodyBattery();
+        if (fresh != null) {
+            _bodyBatt   = fresh;
+            _bodyBattAt = Time.now().value();
+            return (fresh as Number).format("%d");
+        }
+        if (_bodyBatt != null && (Time.now().value() - _bodyBattAt) < STALE_SECS) {
+            return (_bodyBatt as Number).format("%d");
         }
         return "--";
+    }
+
+    private function getStressVal() as Number? {
+        var fresh = readStress();
+        if (fresh != null) {
+            _stress   = fresh;
+            _stressAt = Time.now().value();
+            return fresh;
+        }
+        if (_stress != null && (Time.now().value() - _stressAt) < STALE_SECS) {
+            return _stress;
+        }
+        return null;
     }
 
     private function getHrStr() as String {
@@ -538,10 +544,10 @@ class WatchFaceView extends WatchUi.WatchFace {
         return "--";
     }
 
-    private function buildDistStr(info as ActivityMonitor.Info) as String {
+    private function buildDistStr(info as ActivityMonitor.Info, distanceUnits as System.UnitsSystem) as String {
         if (!(info.distance instanceof Number)) { return "0.00"; }
         var distCm = info.distance as Number;
-        if (System.getDeviceSettings().distanceUnits == System.UNIT_STATUTE) {
+        if (distanceUnits == System.UNIT_STATUTE) {
             return (distCm / 160934.4).format("%.2f");
         }
         return (distCm / 100000.0).format("%.2f");
