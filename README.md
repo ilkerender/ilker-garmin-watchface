@@ -1,4 +1,4 @@
-# Tactical Grid — Garmin Venu 3S Watch Face
+#  Minimalist Watch Face for round-screen Garmin watches
 
 Hey, my name is Ilker and this is my watch face. I've always loved uncluttered watch faces that just give me the right data — nothing more, nothing less. Feel free to customize it and make it your own.
 
