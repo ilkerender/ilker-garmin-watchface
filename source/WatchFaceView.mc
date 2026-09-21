@@ -128,7 +128,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         // Solve each metric band's outer-column offset from measured widths.
         // Top band measured at the values row; bottom at the icon row (lowest).
         var sTop = solveSpread(dc, "88888", "88.88", "8888", _yTopVal, 0, Graphics.FONT_TINY);
-        var sBot = 92;
+        var sBot = solveSpread(dc, "88", "888", "100%", _yBotLbl, 12, Graphics.FONT_TINY);
         _cxLtop = _cxM - sTop;  _cxRtop = _cxM + sTop;
         _cxLbot = _cxM - sBot;  _cxRbot = _cxM + sBot;
 
@@ -296,7 +296,7 @@ class WatchFaceView extends WatchUi.WatchFace {
             var topColor = -1;
             if (restHR >= 0) {
                 if      (restHR < 57) { topColor = C_GREEN;  }
-                else if (restHR < 60) { topColor = C_YELLOW; }
+                else if (restHR < 65) { topColor = C_YELLOW; }
                 else                  { topColor = C_RED;    }
             }
 
