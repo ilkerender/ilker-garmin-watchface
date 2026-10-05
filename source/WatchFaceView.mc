@@ -204,7 +204,7 @@ class WatchFaceView extends WatchUi.WatchFace {
     private function drawFullFace(dc as Dc, is24h as Boolean, distanceUnits as System.UnitsSystem) as Void {
         recordTodayRhr();
         var actInfo = ActivityMonitor.getInfo();
-        drawHeader(dc);
+        drawHeader(dc, actInfo);
         drawTopMetrics(dc, actInfo, distanceUnits);
         drawVerticalDividers(dc);
         drawHairline(dc, _yDiv1);
@@ -221,7 +221,7 @@ class WatchFaceView extends WatchUi.WatchFace {
     private function burnX(ct as System.ClockTime) as Number { return (ct.min % 6) - 3; }
     private function burnY(ct as System.ClockTime) as Number { return (ct.min % 4) - 2; }
 
-    private function drawHeader(dc as Dc) as Void {
+    private function drawHeader(dc as Dc, today as ActivityMonitor.Info) as Void {
         var C_GREEN  = 0x00AA44;
         var C_YELLOW = 0xCCAA00;
 
@@ -232,7 +232,6 @@ class WatchFaceView extends WatchUi.WatchFace {
         var startX   = _cxM - spacing * 3;
         var cy       = _yHeader;
 
-        var today   = ActivityMonitor.getInfo();
         var history = ActivityMonitor.getHistory();
 
         for (var i = 0; i < 7; i++) {
@@ -248,14 +247,8 @@ class WatchFaceView extends WatchUi.WatchFace {
                 if (today.steps    instanceof Number) { steps    = today.steps    as Number; }
                 if (today.stepGoal instanceof Number) { stepGoal = today.stepGoal as Number; }
 
-                var prof = UserProfile.getProfile();
-                if ((prof has :averageRestingHeartRate) && prof.averageRestingHeartRate instanceof Number) {
-                    var rhr = prof.averageRestingHeartRate as Number;
-                    if (rhr > 0) { restHR = rhr; }
-                } else if ((prof has :restingHeartRate) && prof.restingHeartRate instanceof Number) {
-                    var rhr = prof.restingHeartRate as Number;
-                    if (rhr > 0) { restHR = rhr; }
-                }
+                var rhr = readCurrentRhr();
+                if (rhr != null) { restHR = rhr as Number; }
                 if (today has :activeMinutesDay) {
                     var actMin = today.activeMinutesDay;
                     if (actMin != null) {
@@ -451,7 +444,7 @@ class WatchFaceView extends WatchUi.WatchFace {
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         if (showStress) {
             dc.setColor(C_LABEL, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_cxLbot, _yBotLbl, Graphics.FONT_XTINY, "HRV",
+            dc.drawText(_cxLbot, _yBotLbl, Graphics.FONT_XTINY, "STR",
                 Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         } else {
             drawMoonIcon(dc, _cxLbot, _yBotLbl);

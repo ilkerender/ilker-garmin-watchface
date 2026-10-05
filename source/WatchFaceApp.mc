@@ -12,8 +12,19 @@ class WatchFaceApp extends Application.AppBase {
     }
 
     function getInitialView() as [Views] or [Views, InputDelegates] {
-        _view = new WatchFaceView();
-        return [_view];
+        var view = new WatchFaceView();
+        _view = view;
+        seedSleepScore();
+        return [view];
+    }
+
+    // The change callback only fires on updates, so read the current value once.
+    private function seedSleepScore() as Void {
+        if (_sleepId == null || _view == null) { return; }
+        try {
+            var c = Complications.getComplication(_sleepId as Complications.Id);
+            if (c.value instanceof Number) { (_view as WatchFaceView).setSleepScore(c.value as Number); }
+        } catch (e instanceof Complications.ComplicationNotFoundException) {}
     }
 
     function onStart(state as Dictionary?) as Void {
