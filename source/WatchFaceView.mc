@@ -39,7 +39,9 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _hLbl  as Number = 0;
     private var _hVal  as Number = 0;
     private var _hTime as Number = 0;
-    private var _timeFont as Graphics.FontDefinition = Graphics.FONT_NUMBER_THAI_HOT;
+    private var _hDow  as Number = 0;
+    private var _hDom  as Number = 0;
+    private var _timeFont as Graphics.FontType = Graphics.FONT_NUMBER_THAI_HOT;
 
     private var _yHeader  as Number = 30;
     private var _yTopLbl  as Number = 70;
@@ -67,7 +69,12 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _sleepAt    as Number  = 0;
     private const STALE_SECS as Number = 7200;
 
-    private const PAD     as Number = 2;
+    private const PAD      as Number = 2;
+    private const HAIR_PAD as Number = 6;   // metric value row → hairline
+    private const LBL_GAP  as Number = 2;   // metric label row ↔ value row
+    private const TIME_SCALE as Number = 106;   // % of the built-in time font height
+    private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
+    private const DOM_FONT as Graphics.FontDefinition = Graphics.FONT_SMALL;
     private const GAP     as Number = 12;
     private const COLGAP  as Number = 16;
     private const DAY_NAMES as Array<String> = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as Array<String>;
@@ -85,7 +92,10 @@ class WatchFaceView extends WatchUi.WatchFace {
         _hLbl = Graphics.getFontHeight(Graphics.FONT_XTINY);
         _hVal = Graphics.getFontHeight(Graphics.FONT_TINY);    // metric values + date day
 
-        var inset   = _h / 16;
+        _hDow = Graphics.getFontHeight(DOW_FONT);
+        _hDom = Graphics.getFontHeight(DOM_FONT);
+
+        var inset   = _h / 20;
         var safeTop = inset;
         var safeBot = _h - inset;
         var safeH   = safeBot - safeTop;
@@ -97,32 +107,55 @@ class WatchFaceView extends WatchUi.WatchFace {
             Graphics.FONT_NUMBER_MEDIUM
         ] as Array<Graphics.FontDefinition>;
 
-        _timeFont = candidates[candidates.size() - 1];
-        _hTime    = Graphics.getFontHeight(_timeFont);
+        var baseFont = candidates[candidates.size() - 1];
+        _hTime = Graphics.getFontHeight(baseFont);
         for (var i = 0; i < candidates.size(); i += 1) {
             var ht = Graphics.getFontHeight(candidates[i]);
             if (stackHeight(ht) <= safeH) {
-                _timeFont = candidates[i];
-                _hTime    = ht;
+                baseFont = candidates[i];
+                _hTime   = ht;
                 break;
+            }
+        }
+        _timeFont = baseFont;
+
+        // Slightly enlarge the time (CIQ 5.1+: scale the built-in font itself so
+        // the glyphs keep their look); older devices keep the built-in size.
+        if (Graphics has :getVectorFont) {
+            var maxH  = safeH - stackHeight(0);
+            var scale = TIME_SCALE / 100.0;
+            if (_hTime * scale > maxH) { scale = maxH.toFloat() / _hTime; }
+            if (scale > 1.0) {
+                try {
+                    var vf = Graphics.getVectorFont({:font => baseFont, :scale => scale});
+                    if (vf != null) {
+                        var hv = Graphics.getFontHeight(vf);
+                        if (hv <= maxH) {
+                            _timeFont = vf;
+                            _hTime    = hv;
+                        }
+                    }
+                } catch (e) {
+                    // keep the built-in font
+                }
             }
         }
 
         // Pin the TIME to the exact vertical center (widest chord), then flow
         // the rest of the stack outward from there.
-        var toTimeCenter = _hHdr + PAD + _hLbl + 4 + _hVal + PAD + 1 + PAD + _hTime / 2;
+        var toTimeCenter = _hHdr + PAD + _hLbl + LBL_GAP + _hVal + HAIR_PAD + 1 + PAD + _hTime / 2;
         var y = _h / 2 - toTimeCenter;
         if (y < safeTop) { y = safeTop; }
 
         _yHeader = y + _hHdr / 2;            y += _hHdr + PAD;
-        _yTopLbl = y + _hLbl / 2;            y += _hLbl + 4;
-        _yTopVal = y + _hVal / 2;            y += _hVal + PAD;
+        _yTopLbl = y + _hLbl / 2;            y += _hLbl + LBL_GAP;
+        _yTopVal = y + _hVal / 2;            y += _hVal + HAIR_PAD;
         _yDiv1   = y;                        y += 1 + PAD;
         _yTime   = y + _hTime / 2;
-        _yDateTop = _yTime - _hVal / 2;
-        _yDateBot = _yTime + _hHdr / 2;      y += _hTime + PAD;
-        _yDiv2   = y;                        y += 1 + PAD;
-        _yBotVal = y + _hVal / 2;            y += _hVal + 4;
+        _yDateTop = _yTime - _hDom / 2;
+        _yDateBot = _yTime + _hDow / 2;      y += _hTime + PAD;
+        _yDiv2   = y;                        y += 1 + HAIR_PAD;
+        _yBotVal = y + _hVal / 2;            y += _hVal + LBL_GAP;
         _yBotLbl = y + _hLbl / 2;
 
         // Solve each metric band's outer-column offset from measured widths.
@@ -137,11 +170,11 @@ class WatchFaceView extends WatchUi.WatchFace {
     // Stack height for a candidate time-font height.
     private function stackHeight(hTime as Number) as Number {
         return _hHdr + PAD
-             + _hLbl + 4 + _hVal + PAD
+             + _hLbl + LBL_GAP + _hVal + HAIR_PAD
              + 1 + PAD
              + hTime + PAD
-             + 1 + PAD
-             + _hVal + 4 + _hLbl;
+             + 1 + HAIR_PAD
+             + _hVal + LBL_GAP + _hLbl;
     }
 
     // Outer-column offset bounded by: lower = no overlap with center column,
@@ -404,8 +437,8 @@ class WatchFaceView extends WatchUi.WatchFace {
         var dom      = (today.day instanceof Number) ? (today.day as Number).format("%d") : "--";
 
         var timeW = dc.getTextWidthInPixels(timeStr, _timeFont);
-        var dowW  = dc.getTextWidthInPixels(dow, Graphics.FONT_XTINY);
-        var domW  = dc.getTextWidthInPixels(dom, Graphics.FONT_TINY);
+        var dowW  = dc.getTextWidthInPixels(dow, DOW_FONT);
+        var domW  = dc.getTextWidthInPixels(dom, DOM_FONT);
         var dateW = (dowW > domW) ? dowW : domW;
 
         var groupW = timeW + GAP + dateW;
@@ -416,9 +449,9 @@ class WatchFaceView extends WatchUi.WatchFace {
             Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var dateCx = startX + timeW + GAP + dateW / 2;
-        dc.drawText(dateCx, _yDateTop + yShift, Graphics.FONT_XTINY, dow,
+        dc.drawText(dateCx, _yDateTop + yShift, DOW_FONT, dow,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(dateCx, _yDateBot + yShift, Graphics.FONT_TINY, dom,
+        dc.drawText(dateCx, _yDateBot + yShift, DOM_FONT, dom,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
