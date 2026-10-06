@@ -92,6 +92,7 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const CHART_GAP  as Number = 8;     // chart bottom → hairline
     private const CHART_SECS as Number = 86400;
     private const CHART_REFRESH as Number = 600;
+    private const STRESS_HIGH   as Number = 50;    // bars above this turn red
     private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
     private const DOM_FONT as Graphics.FontDefinition = Graphics.FONT_SMALL;
     private const GAP     as Number = 12;
@@ -522,7 +523,13 @@ class WatchFaceView extends WatchUi.WatchFace {
                 h = 2 + (v * (_chartH - 2)) / 100;
                 b = 0x34 + (0x6C * i) / (CHART_BARS - 1);   // 0x34 → 0xA0
             }
-            dc.setColor((b << 16) | (b << 8) | b, Graphics.COLOR_TRANSPARENT);
+            if (v > STRESS_HIGH) {
+                // High stress: red, fading with age like the grey bars (b/0xA0 of full red).
+                dc.setColor(((0xAA * b / 0xA0) << 16) | ((0x22 * b / 0xA0) << 8) | (0x22 * b / 0xA0),
+                            Graphics.COLOR_TRANSPARENT);
+            } else {
+                dc.setColor((b << 16) | (b << 8) | b, Graphics.COLOR_TRANSPARENT);
+            }
             dc.fillRectangle(x0 + i * (bw + gap), base - h, bw, h);
         }
     }
