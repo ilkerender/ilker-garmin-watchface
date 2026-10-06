@@ -21,8 +21,8 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const C_AOD     as Number = 0xAAAAAA;
     private const C_RED     as Number = 0xAA2222;
     private const C_GREEN   as Number = 0x00AA44;
+    private const C_YELLOW  as Number = 0xCCAA00;
     private const C_TRACK   as Number = 0x1C1C1C;
-    private const C_BATTLOW as Number = C_RED;
 
     // ── Screen geometry (resolved in onLayout) ─────────────────────────────
     private var _w as Number = 390;
@@ -256,7 +256,6 @@ class WatchFaceView extends WatchUi.WatchFace {
     private function burnY(ct as System.ClockTime) as Number { return (ct.min % 4) - 2; }
 
     private function drawHeader(dc as Dc, today as ActivityMonitor.Info) as Void {
-        var C_YELLOW = 0xCCAA00;
 
         var C_RING   = 0x606060; // bright enough to see on real AMOLED
         var C_EMPTY  = 0x1A1A1A; // dim base so the dot shape is always visible
@@ -493,7 +492,12 @@ class WatchFaceView extends WatchUi.WatchFace {
                        180 + half - (span * stepPct).toNumber());
         }
         if (battPct > 0.02) {
-            dc.setColor(battPct <= 0.2 ? C_BATTLOW : C_ICON, Graphics.COLOR_TRANSPARENT);
+            // Normal grey; yellow warning under 20%; red at 5% or below.
+            var battPctInt = System.getSystemStats().battery.toNumber();
+            var battColor  = C_ICON;
+            if (battPctInt <= 5)       { battColor = C_RED; }
+            else if (battPctInt < 20)  { battColor = C_YELLOW; }
+            dc.setColor(battColor, Graphics.COLOR_TRANSPARENT);
             dc.drawArc(cx, cy, r, Graphics.ARC_COUNTER_CLOCKWISE, 360 - half,
                        (360 - half + (span * battPct).toNumber()) % 360);
         }
