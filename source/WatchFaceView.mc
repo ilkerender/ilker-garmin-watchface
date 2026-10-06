@@ -59,7 +59,8 @@ class WatchFaceView extends WatchUi.WatchFace {
 
     private var _isAwake as Boolean = true;
 
-    private var _stressBars   as Array<Number>? = null;   // 0-100, or -1 for no data
+    private var _stressBars   as Array<Number>?  = null;   // smoothed 0-100, or -1 for no data
+    private var _stressRed    as Array<Boolean>? = null;   // bar belongs to a high-stress stretch
     private var _stressBarsAt as Number         = 0;
 
     // RHR history — persisted daily in Application.Storage
@@ -495,43 +496,78 @@ class WatchFaceView extends WatchUi.WatchFace {
             }
         }
 
+        var raw = new Array<Number>[CHART_BARS];
+        for (var i = 0; i < CHART_BARS; i += 1) {
+            raw[i] = (counts[i] > 0) ? (sums[i] / counts[i]) : -1;
+        }
+
+        // Smooth with [1,2,1] over neighbours that have data so the strip reads as
+        // stretches rather than noise; hours without data stay empty.
         var bars = new Array<Number>[CHART_BARS];
         for (var i = 0; i < CHART_BARS; i += 1) {
-            bars[i] = (counts[i] > 0) ? (sums[i] / counts[i]) : -1;
+            if (raw[i] < 0) { bars[i] = -1; continue; }
+            var sum = raw[i] * 2;
+            var wt  = 2;
+            if (i > 0 && raw[i - 1] >= 0)               { sum += raw[i - 1]; wt += 1; }
+            if (i < CHART_BARS - 1 && raw[i + 1] >= 0)  { sum += raw[i + 1]; wt += 1; }
+            bars[i] = sum / wt;
         }
+
+        // Red only for stretches: runs of 2+ consecutive bars above the threshold.
+        var red = new Array<Boolean>[CHART_BARS];
+        for (var i = 0; i < CHART_BARS; i += 1) { red[i] = false; }
+        var a = 0;
+        while (a < CHART_BARS) {
+            if (bars[a] > STRESS_HIGH) {
+                var b = a;
+                while (b < CHART_BARS && bars[b] > STRESS_HIGH) { b += 1; }
+                if (b - a >= 2) {
+                    for (var k = a; k < b; k += 1) { red[k] = true; }
+                }
+                a = b;
+            } else {
+                a += 1;
+            }
+        }
+
         _stressBars   = bars;
+        _stressRed    = red;
         _stressBarsAt = now;
     }
 
-    // Small grey bar strip under the time; older bars are dimmer, the newest brightest.
+    // Small bar strip under the time: grey bars (older dimmer, newest brightest) with
+    // red stretches where stress stayed high. Rounded tops sit on a faint baseline.
     private function drawStressChart(dc as Dc) as Void {
         refreshStressBars();
         var bars = _stressBars;
-        if (bars == null) { return; }
+        var red  = _stressRed;
+        if (bars == null || red == null) { return; }
 
         var bw    = 4;
         var gap   = 2;
         var total = CHART_BARS * (bw + gap) - gap;
         var x0    = _cxM - total / 2;
         var base  = _yChart + _chartH;
+        var last  = CHART_BARS - 1;
 
+        dc.setClip(x0 - 1, _yChart, total + 2, _chartH);     // flat bottoms, rounded tops
         for (var i = 0; i < CHART_BARS; i += 1) {
             var v = (bars as Array<Number>)[i];
-            var h = 1;
-            var b = 0x24;                                   // no data: faint baseline
-            if (v >= 0) {
-                h = 2 + (v * (_chartH - 2)) / 100;
-                b = 0x34 + (0x6C * i) / (CHART_BARS - 1);   // 0x34 → 0xA0
-            }
-            if (v > STRESS_HIGH) {
-                // High stress: red, fading with age like the grey bars (b/0xA0 of full red).
-                dc.setColor(((0xAA * b / 0xA0) << 16) | ((0x22 * b / 0xA0) << 8) | (0x22 * b / 0xA0),
-                            Graphics.COLOR_TRANSPARENT);
+            if (v < 0) { continue; }
+            var h = 3 + (v * (_chartH - 3)) / 100;
+            if ((red as Array<Boolean>)[i]) {
+                var r = 0x70 + (0x60 * i) / last;            // 0x70 → 0xD0
+                dc.setColor((r << 16) | ((r / 5) << 8) | (r / 5), Graphics.COLOR_TRANSPARENT);
             } else {
-                dc.setColor((b << 16) | (b << 8) | b, Graphics.COLOR_TRANSPARENT);
+                var g = 0x38 + (0x68 * i) / last;            // 0x38 → 0xA0
+                dc.setColor((g << 16) | (g << 8) | g, Graphics.COLOR_TRANSPARENT);
             }
-            dc.fillRectangle(x0 + i * (bw + gap), base - h, bw, h);
+            dc.fillRoundedRectangle(x0 + i * (bw + gap), base - h, bw, h + 2, 2);
         }
+        dc.clearClip();
+
+        dc.setColor(0x2A2A2A, Graphics.COLOR_TRANSPARENT);
+        dc.drawLine(x0 - 2, base, x0 + total + 1, base);
     }
 
     private function drawBottomMetrics(dc as Dc, info as ActivityMonitor.Info) as Void {
