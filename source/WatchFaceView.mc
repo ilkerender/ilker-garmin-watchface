@@ -519,7 +519,8 @@ class WatchFaceView extends WatchUi.WatchFace {
         dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cxRbot, _yBotVal, Graphics.FONT_TINY, battStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        drawBatteryIcon(dc, _cxRbot, _yBotLbl, batt);
+        drawBatteryIcon(dc, _cxRbot, _yBotLbl, batt,
+            dc.getTextWidthInPixels(battStr, Graphics.FONT_TINY));
 
         // Moon icon is ~7px, battery icon ~14px (incl. nub) — floor for the
         // columns whose label row is an icon.
@@ -544,9 +545,11 @@ class WatchFaceView extends WatchUi.WatchFace {
 
 
 
-    private function drawBatteryIcon(dc as Dc, cx as Number, cy as Number, pct as Number) as Void {
-        var bw = 24; var bh = 10;
-        var bx = cx - bw / 2; var by = cy - bh / 2;
+    // span = total icon width including the 3px nub, so it can match the value text above.
+    private function drawBatteryIcon(dc as Dc, cx as Number, cy as Number, pct as Number, span as Number) as Void {
+        var bw = span - 3; var bh = 10;
+        if (bw < 24) { bw = 24; }
+        var bx = cx - (bw + 3) / 2; var by = cy - bh / 2;
         dc.setColor(C_ICON, Graphics.COLOR_TRANSPARENT);
         dc.drawRectangle(bx, by, bw, bh);
         dc.fillRectangle(bx + bw, by + 3, 3, 4);
