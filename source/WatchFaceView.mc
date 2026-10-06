@@ -51,11 +51,15 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _yTime    as Number = 195;
     private var _yDateTop as Number = 178;
     private var _yDateBot as Number = 210;
+    private var _yChart   as Number = 250;   // top of the stress strip
     private var _yDiv2    as Number = 262;
     private var _yBotVal  as Number = 300;
     private var _yBotLbl  as Number = 328;
 
     private var _isAwake as Boolean = true;
+
+    private var _stressBars   as Array<Number>? = null;   // 0-100, or -1 for no data
+    private var _stressBarsAt as Number         = 0;
 
     // RHR history — persisted daily in Application.Storage
     private const RHR_KEY  as String            = "rhrHist";
@@ -73,7 +77,15 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const PAD      as Number = 2;
     private const HAIR_PAD as Number = 6;   // metric value row → hairline
     private const LBL_GAP  as Number = 2;   // metric label row ↔ value row
-    private const TIME_SCALE as Number = 106;   // % of the built-in time font height
+    private const TIME_SCALE     as Number = 106;   // % of the built-in time font height
+    private const MIN_TIME_SCALE as Number = 85;    // never shrink the time below this %
+
+    // 24h stress strip under the time
+    private const CHART_BARS as Number = 40;
+    private const CHART_H    as Number = 12;
+    private const CHART_GAP  as Number = 3;     // chart bottom → hairline
+    private const CHART_SECS as Number = 86400;
+    private const CHART_REFRESH as Number = 600;
     private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
     private const DOM_FONT as Graphics.FontDefinition = Graphics.FONT_SMALL;
     private const GAP     as Number = 12;
@@ -96,7 +108,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         _hDow = Graphics.getFontHeight(DOW_FONT);
         _hDom = Graphics.getFontHeight(DOM_FONT);
 
-        var inset   = _h / 20;
+        var inset   = _h / 24;
         var safeTop = inset;
         var safeBot = _h - inset;
         var safeH   = safeBot - safeTop;
@@ -120,18 +132,21 @@ class WatchFaceView extends WatchUi.WatchFace {
         }
         _timeFont = baseFont;
 
-        // Slightly enlarge the time (CIQ 5.1+: scale the built-in font itself so
-        // the glyphs keep their look); older devices keep the built-in size.
+        // Rescale the biggest built-in time font (CIQ 5.1+) so the glyphs keep
+        // their look: slightly larger when there is room, slightly smaller when
+        // the stack is tight. Older devices keep the built-in size.
         if (Graphics has :getVectorFont) {
-            var maxH  = safeH - stackHeight(0);
-            var scale = TIME_SCALE / 100.0;
-            if (_hTime * scale > maxH) { scale = maxH.toFloat() / _hTime; }
-            if (scale > 1.0) {
+            var topFont = candidates[0];
+            var h0      = Graphics.getFontHeight(topFont);
+            var maxH    = safeH - stackHeight(0);
+            var scale   = TIME_SCALE / 100.0;
+            if (h0 * scale > maxH) { scale = maxH.toFloat() / h0; }
+            if (scale >= MIN_TIME_SCALE / 100.0) {
                 try {
-                    var vf = Graphics.getVectorFont({:font => baseFont, :scale => scale});
+                    var vf = Graphics.getVectorFont({:font => topFont, :scale => scale});
                     if (vf != null) {
                         var hv = Graphics.getFontHeight(vf);
-                        if (hv <= maxH) {
+                        if (hv <= maxH && hv > _hTime) {
                             _timeFont = vf;
                             _hTime    = hv;
                         }
@@ -155,6 +170,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         _yTime   = y + _hTime / 2;
         _yDateTop = _yTime - _hDom / 2;
         _yDateBot = _yTime + _hDow / 2;      y += _hTime + PAD;
+        _yChart  = y;                        y += CHART_H + CHART_GAP;
         _yDiv2   = y;                        y += 1 + HAIR_PAD;
         _yBotVal = y + _hVal / 2;            y += _hVal + LBL_GAP;
         _yBotLbl = y + _hLbl / 2;
@@ -174,6 +190,7 @@ class WatchFaceView extends WatchUi.WatchFace {
              + _hLbl + LBL_GAP + _hVal + HAIR_PAD
              + 1 + PAD
              + hTime + PAD
+             + CHART_H + CHART_GAP
              + 1 + HAIR_PAD
              + _hVal + LBL_GAP + _hLbl;
     }
@@ -242,6 +259,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         drawTopMetrics(dc, actInfo, distanceUnits);
         drawHairline(dc, _yDiv1);
         drawTimeBand(dc, System.getClockTime(), C_PRIMARY, 0, 0, is24h);
+        drawStressChart(dc);
         drawHairline(dc, _yDiv2);
         drawBottomMetrics(dc, actInfo);
         drawBezelArcs(dc, actInfo);
@@ -427,6 +445,70 @@ class WatchFaceView extends WatchUi.WatchFace {
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.drawText(dateCx, _yDateBot + yShift, DOM_FONT, dom,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    // Average the last 24h of stress samples into CHART_BARS buckets (oldest first).
+    // Cached: a full pass reads several hundred samples, so redo it every few minutes.
+    private function refreshStressBars() as Void {
+        var now = Time.now().value();
+        if (_stressBars != null && (now - _stressBarsAt) < CHART_REFRESH) { return; }
+
+        var sums   = new Array<Number>[CHART_BARS];
+        var counts = new Array<Number>[CHART_BARS];
+        for (var i = 0; i < CHART_BARS; i += 1) { sums[i] = 0; counts[i] = 0; }
+
+        if ((Toybox has :SensorHistory) && (SensorHistory has :getStressHistory)) {
+            var iter = SensorHistory.getStressHistory({
+                :period => new Time.Duration(CHART_SECS),
+                :order  => SensorHistory.ORDER_OLDEST_FIRST
+            });
+            if (iter != null) {
+                var start  = now - CHART_SECS;
+                var sample = iter.next();
+                while (sample != null) {
+                    if (sample.data != null) {
+                        var idx = ((sample.when.value() - start) * CHART_BARS) / CHART_SECS;
+                        if (idx < 0)           { idx = 0; }
+                        if (idx >= CHART_BARS) { idx = CHART_BARS - 1; }
+                        sums[idx]   += (sample.data as Number).toNumber();
+                        counts[idx] += 1;
+                    }
+                    sample = iter.next();
+                }
+            }
+        }
+
+        var bars = new Array<Number>[CHART_BARS];
+        for (var i = 0; i < CHART_BARS; i += 1) {
+            bars[i] = (counts[i] > 0) ? (sums[i] / counts[i]) : -1;
+        }
+        _stressBars   = bars;
+        _stressBarsAt = now;
+    }
+
+    // Small grey bar strip under the time; older bars are dimmer, the newest brightest.
+    private function drawStressChart(dc as Dc) as Void {
+        refreshStressBars();
+        var bars = _stressBars;
+        if (bars == null) { return; }
+
+        var bw    = 3;
+        var gap   = 2;
+        var total = CHART_BARS * (bw + gap) - gap;
+        var x0    = _cxM - total / 2;
+        var base  = _yChart + CHART_H;
+
+        for (var i = 0; i < CHART_BARS; i += 1) {
+            var v = (bars as Array<Number>)[i];
+            var h = 1;
+            var b = 0x24;                                   // no data: faint baseline
+            if (v >= 0) {
+                h = 2 + (v * (CHART_H - 2)) / 100;
+                b = 0x34 + (0x6C * i) / (CHART_BARS - 1);   // 0x34 → 0xA0
+            }
+            dc.setColor((b << 16) | (b << 8) | b, Graphics.COLOR_TRANSPARENT);
+            dc.fillRectangle(x0 + i * (bw + gap), base - h, bw, h);
+        }
     }
 
     private function drawBottomMetrics(dc as Dc, info as ActivityMonitor.Info) as Void {
