@@ -39,7 +39,8 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _hHdr  as Number = 0;
     private var _hLbl  as Number = 0;
     private var _hVal  as Number = 0;
-    private var _hTime as Number = 0;
+    private var _timeDy as Number = 0;      // digit centre relative to font-box centre
+    private var _chartH as Number = 14;
     private var _hDow  as Number = 0;
     private var _hDom  as Number = 0;
     private var _timeFont as Graphics.FontType = Graphics.FONT_NUMBER_THAI_HOT;
@@ -75,15 +76,20 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const STALE_SECS as Number = 7200;
 
     private const PAD      as Number = 2;
-    private const HAIR_PAD as Number = 6;   // metric value row → hairline
+    private const HAIR_PAD as Number = 8;   // metric value row → hairline
     private const LBL_GAP  as Number = 2;   // metric label row ↔ value row
-    private const TIME_SCALE     as Number = 106;   // % of the built-in time font height
-    private const MIN_TIME_SCALE as Number = 85;    // never shrink the time below this %
+    // Number fonts reserve a lot of empty space above/below the digits. The layout
+    // is sized by the digits themselves: digit height ≈ INK_PCT % of the font ascent,
+    // sitting on the baseline (measured on THAI_HOT/HOT).
+    private const INK_PCT as Number = 69;
+    private const TPAD    as Number = 8;     // hairline → digits
+    private const TGAP    as Number = 8;     // digits → chart
 
     // 24h stress strip under the time
-    private const CHART_BARS as Number = 40;
-    private const CHART_H    as Number = 12;
-    private const CHART_GAP  as Number = 3;     // chart bottom → hairline
+    private const CHART_BARS as Number = 48;
+    private const CHART_MIN  as Number = 14;
+    private const CHART_MAX  as Number = 36;
+    private const CHART_GAP  as Number = 8;     // chart bottom → hairline
     private const CHART_SECS as Number = 86400;
     private const CHART_REFRESH as Number = 600;
     private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
@@ -113,7 +119,19 @@ class WatchFaceView extends WatchUi.WatchFace {
         var safeBot = _h - inset;
         var safeH   = safeBot - safeTop;
 
-        // Largest number font whose full stack fits the vertical safe band.
+        // Everything except the time digits and the chart.
+        var fixed = _hHdr + PAD + _hLbl + LBL_GAP + _hVal + HAIR_PAD + 1 + TPAD
+                  + TGAP + CHART_GAP + 1 + HAIR_PAD + _hVal + LBL_GAP + _hLbl;
+        var avail = safeH - fixed;            // shared by time digits + chart
+
+        // Widest the time may be, leaving room for the date block beside it.
+        var wDow    = dc.getTextWidthInPixels("WED", DOW_FONT);
+        var wDom    = dc.getTextWidthInPixels("88",  DOM_FONT);
+        var dateW   = (wDow > wDom) ? wDow : wDom;
+        var widthCap = (chordHalf(_h / 2) * 2 * 94) / 100 - GAP - dateW;
+        var inkCap   = avail - CHART_MIN;
+
+        // Built-in fallback: largest number font whose digits fit.
         var candidates = [
             Graphics.FONT_NUMBER_THAI_HOT,
             Graphics.FONT_NUMBER_HOT,
@@ -121,56 +139,60 @@ class WatchFaceView extends WatchUi.WatchFace {
         ] as Array<Graphics.FontDefinition>;
 
         var baseFont = candidates[candidates.size() - 1];
-        _hTime = Graphics.getFontHeight(baseFont);
         for (var i = 0; i < candidates.size(); i += 1) {
-            var ht = Graphics.getFontHeight(candidates[i]);
-            if (stackHeight(ht) <= safeH) {
+            if (inkOf(candidates[i]) <= inkCap
+                && dc.getTextWidthInPixels("00:00", candidates[i]) <= widthCap) {
                 baseFont = candidates[i];
-                _hTime   = ht;
                 break;
             }
         }
         _timeFont = baseFont;
+        var inkH = inkOf(baseFont);
 
-        // Rescale the biggest built-in time font (CIQ 5.1+) so the glyphs keep
-        // their look: slightly larger when there is room, slightly smaller when
-        // the stack is tight. Older devices keep the built-in size.
+        // CIQ 5.1+: rescale the biggest font to exactly fill the height / width
+        // budget (glyphs keep their look). Older devices keep the built-in size.
         if (Graphics has :getVectorFont) {
-            var topFont = candidates[0];
-            var h0      = Graphics.getFontHeight(topFont);
-            var maxH    = safeH - stackHeight(0);
-            var scale   = TIME_SCALE / 100.0;
-            if (h0 * scale > maxH) { scale = maxH.toFloat() / h0; }
-            if (scale >= MIN_TIME_SCALE / 100.0) {
+            var f0  = candidates[0];
+            var sH  = inkCap.toFloat() / inkOf(f0);
+            var sW  = widthCap.toFloat() / dc.getTextWidthInPixels("00:00", f0);
+            var s   = (sH < sW) ? sH : sW;
+            for (var n = 0; n < 4 && s >= 0.6; n += 1) {
                 try {
-                    var vf = Graphics.getVectorFont({:font => topFont, :scale => scale});
+                    var vf = Graphics.getVectorFont({:font => f0, :scale => s});
                     if (vf != null) {
-                        var hv = Graphics.getFontHeight(vf);
-                        if (hv <= maxH && hv > _hTime) {
-                            _timeFont = vf;
-                            _hTime    = hv;
+                        var ink = inkOf(vf);
+                        if (ink <= inkCap && dc.getTextWidthInPixels("00:00", vf) <= widthCap) {
+                            if (ink > inkH) { _timeFont = vf; inkH = ink; }
+                            break;
                         }
                     }
                 } catch (e) {
-                    // keep the built-in font
+                    break;      // keep the built-in font
                 }
+                s = s * 0.97;
             }
         }
 
-        // Pin the TIME to the exact vertical center (widest chord), then flow
-        // the rest of the stack outward from there.
-        var toTimeCenter = _hHdr + PAD + _hLbl + LBL_GAP + _hVal + HAIR_PAD + 1 + PAD + _hTime / 2;
+        _chartH = avail - inkH;
+        if (_chartH > CHART_MAX) { _chartH = CHART_MAX; }
+        _timeDy = Graphics.getFontAscent(_timeFont) - inkH / 2 - Graphics.getFontHeight(_timeFont) / 2;
+
+        // Pin the digits to the exact vertical centre (widest chord) where the
+        // stack allows, then flow the rest outward from there.
+        var total        = fixed + inkH + _chartH;
+        var toTimeCenter = _hHdr + PAD + _hLbl + LBL_GAP + _hVal + HAIR_PAD + 1 + TPAD + inkH / 2;
         var y = _h / 2 - toTimeCenter;
-        if (y < safeTop) { y = safeTop; }
+        if (y < safeTop)           { y = safeTop; }
+        if (y + total > safeBot)   { y = safeBot - total; }
 
         _yHeader = y + _hHdr / 2;            y += _hHdr + PAD;
         _yTopLbl = y + _hLbl / 2;            y += _hLbl + LBL_GAP;
         _yTopVal = y + _hVal / 2;            y += _hVal + HAIR_PAD;
-        _yDiv1   = y;                        y += 1 + PAD;
-        _yTime   = y + _hTime / 2;
+        _yDiv1   = y;                        y += 1 + TPAD;
+        _yTime   = y + inkH / 2;             // centre of the digits
         _yDateTop = _yTime - _hDom / 2;
-        _yDateBot = _yTime + _hDow / 2;      y += _hTime + PAD;
-        _yChart  = y;                        y += CHART_H + CHART_GAP;
+        _yDateBot = _yTime + _hDow / 2;      y += inkH + TGAP;
+        _yChart  = y;                        y += _chartH + CHART_GAP;
         _yDiv2   = y;                        y += 1 + HAIR_PAD;
         _yBotVal = y + _hVal / 2;            y += _hVal + LBL_GAP;
         _yBotLbl = y + _hLbl / 2;
@@ -184,15 +206,9 @@ class WatchFaceView extends WatchUi.WatchFace {
 
     }
 
-    // Stack height for a candidate time-font height.
-    private function stackHeight(hTime as Number) as Number {
-        return _hHdr + PAD
-             + _hLbl + LBL_GAP + _hVal + HAIR_PAD
-             + 1 + PAD
-             + hTime + PAD
-             + CHART_H + CHART_GAP
-             + 1 + HAIR_PAD
-             + _hVal + LBL_GAP + _hLbl;
+    // Height of the digits of a number font (they sit on the baseline).
+    private function inkOf(font as Graphics.FontType) as Number {
+        return Graphics.getFontAscent(font) * INK_PCT / 100;
     }
 
     // Outer-column offset bounded by: lower = no overlap with center column,
@@ -437,7 +453,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         var startX = (_w - groupW) / 2 + xShift;
 
         dc.setColor(timeColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(startX, _yTime + yShift, _timeFont, timeStr,
+        dc.drawText(startX, _yTime + yShift - _timeDy, _timeFont, timeStr,
             Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var dateCx = startX + timeW + GAP + dateW / 2;
@@ -492,18 +508,18 @@ class WatchFaceView extends WatchUi.WatchFace {
         var bars = _stressBars;
         if (bars == null) { return; }
 
-        var bw    = 3;
+        var bw    = 4;
         var gap   = 2;
         var total = CHART_BARS * (bw + gap) - gap;
         var x0    = _cxM - total / 2;
-        var base  = _yChart + CHART_H;
+        var base  = _yChart + _chartH;
 
         for (var i = 0; i < CHART_BARS; i += 1) {
             var v = (bars as Array<Number>)[i];
             var h = 1;
             var b = 0x24;                                   // no data: faint baseline
             if (v >= 0) {
-                h = 2 + (v * (CHART_H - 2)) / 100;
+                h = 2 + (v * (_chartH - 2)) / 100;
                 b = 0x34 + (0x6C * i) / (CHART_BARS - 1);   // 0x34 → 0xA0
             }
             dc.setColor((b << 16) | (b << 8) | b, Graphics.COLOR_TRANSPARENT);
