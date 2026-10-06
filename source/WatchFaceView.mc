@@ -54,6 +54,15 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _yBotVal  as Number = 300;
     private var _yBotLbl  as Number = 328;
 
+    // Half-widths of the widest content in each metric column (value or
+    // label/icon), recorded while drawing so dividers can sit between edges.
+    private var _hwTL as Number = 0;
+    private var _hwTM as Number = 0;
+    private var _hwTR as Number = 0;
+    private var _hwBL as Number = 0;
+    private var _hwBM as Number = 0;
+    private var _hwBR as Number = 0;
+
     private var _isAwake as Boolean = true;
 
     // RHR history — persisted daily in Application.Storage
@@ -239,11 +248,11 @@ class WatchFaceView extends WatchUi.WatchFace {
         var actInfo = ActivityMonitor.getInfo();
         drawHeader(dc, actInfo);
         drawTopMetrics(dc, actInfo, distanceUnits);
-        drawVerticalDividers(dc);
         drawHairline(dc, _yDiv1);
         drawTimeBand(dc, System.getClockTime(), C_PRIMARY, 0, 0, is24h);
         drawHairline(dc, _yDiv2);
         drawBottomMetrics(dc, actInfo);
+        drawVerticalDividers(dc);
     }
 
     private function drawAOD(dc as Dc, is24h as Boolean) as Void {
@@ -379,11 +388,12 @@ class WatchFaceView extends WatchUi.WatchFace {
         var bTop = _yBotVal - _hVal / 2 - 4;
         var bBot = _yBotLbl + _hLbl / 2 + 4;
 
-        // X: midpoint between adjacent column centers
-        var txL = (_cxLtop + _cxM) / 2;
-        var txR = (_cxM + _cxRtop) / 2;
-        var bxL = (_cxLbot + _cxM) / 2;
-        var bxR = (_cxM + _cxRbot) / 2;
+        // X: midpoint between the facing text edges of adjacent columns, so
+        // the padding on either side of a divider matches whatever is drawn.
+        var txL = ((_cxLtop + _hwTL) + (_cxM - _hwTM)) / 2;
+        var txR = ((_cxM + _hwTM) + (_cxRtop - _hwTR)) / 2;
+        var bxL = ((_cxLbot + _hwBL) + (_cxM - _hwBM)) / 2;
+        var bxR = ((_cxM + _hwBM) + (_cxRbot - _hwBR)) / 2;
 
         drawFadingVLine(dc, txL, tTop, tBot);
         drawFadingVLine(dc, txR, tTop, tBot);
@@ -409,14 +419,27 @@ class WatchFaceView extends WatchUi.WatchFace {
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var stepsStr = (info.steps instanceof Number) ? (info.steps as Number).toString() : "0";
+        var distStr  = buildDistStr(info, distanceUnits);
+        var bodyStr  = getBodyBatteryStr();
 
         dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cxLtop, _yTopVal, Graphics.FONT_TINY, stepsStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(_cxM, _yTopVal, Graphics.FONT_TINY, buildDistStr(info, distanceUnits),
+        dc.drawText(_cxM, _yTopVal, Graphics.FONT_TINY, distStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(_cxRtop, _yTopVal, Graphics.FONT_TINY, getBodyBatteryStr(),
+        dc.drawText(_cxRtop, _yTopVal, Graphics.FONT_TINY, bodyStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+
+        _hwTL = columnHalfW(dc, stepsStr, "STP");
+        _hwTM = columnHalfW(dc, distStr,  "DIST");
+        _hwTR = columnHalfW(dc, bodyStr,  "BODY");
+    }
+
+    // Half-width of a column: the wider of its value (TINY) and label (XTINY).
+    private function columnHalfW(dc as Dc, value as String, label as String) as Number {
+        var v = dc.getTextWidthInPixels(value, Graphics.FONT_TINY);
+        var l = dc.getTextWidthInPixels(label, Graphics.FONT_XTINY);
+        return ((v > l) ? v : l) / 2;
     }
 
     private function drawTimeBand(dc as Dc, clockTime as System.ClockTime,
@@ -483,18 +506,28 @@ class WatchFaceView extends WatchUi.WatchFace {
             drawMoonIcon(dc, _cxLbot, _yBotLbl);
         }
 
+        var hrStr = getHrStr();
         dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cxM, _yBotVal, Graphics.FONT_TINY, getHrStr(),
+        dc.drawText(_cxM, _yBotVal, Graphics.FONT_TINY, hrStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(C_LABEL, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cxM, _yBotLbl, Graphics.FONT_XTINY, "HR",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
-        var batt = System.getSystemStats().battery.toNumber();
+        var batt    = System.getSystemStats().battery.toNumber();
+        var battStr = batt.toString() + "%";
         dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cxRbot, _yBotVal, Graphics.FONT_TINY, batt.toString() + "%",
+        dc.drawText(_cxRbot, _yBotVal, Graphics.FONT_TINY, battStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         drawBatteryIcon(dc, _cxRbot, _yBotLbl, batt);
+
+        // Moon icon is ~7px, battery icon ~14px (incl. nub) — floor for the
+        // columns whose label row is an icon.
+        _hwBL = columnHalfW(dc, sleepStr, showStress ? "STR" : "");
+        _hwBM = columnHalfW(dc, hrStr,    "HR");
+        _hwBR = columnHalfW(dc, battStr,  "");
+        if (!showStress && _hwBL < 7) { _hwBL = 7; }
+        if (_hwBR < 14)               { _hwBR = 14; }
     }
 
     // Crescent moon: filled circle with an offset filled circle cut out in bg colour
