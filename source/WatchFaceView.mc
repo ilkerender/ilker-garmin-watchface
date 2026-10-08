@@ -60,7 +60,6 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _isAwake as Boolean = true;
 
     private var _stressBars   as Array<Number>?  = null;   // smoothed 0-100, or -1 for no data
-    private var _stressRed    as Array<Boolean>? = null;   // bar belongs to a high-stress stretch
     private var _stressBarsAt as Number         = 0;
 
     // RHR history — persisted daily in Application.Storage
@@ -93,7 +92,9 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const CHART_GAP  as Number = 8;     // chart bottom → hairline
     private const CHART_SECS as Number = 86400;
     private const CHART_REFRESH as Number = 600;
-    private const STRESS_HIGH   as Number = 50;    // bars above this turn red
+    private const STRESS_HIGH   as Number = 50;    // bars above this are red, the rest green
+    private const C_CALM        as Number = 0x2DBE60;
+    private const C_STRESSED    as Number = 0xE04040;
     private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
     private const DOM_FONT as Graphics.FontDefinition = Graphics.FONT_SMALL;
     private const GAP     as Number = 12;
@@ -513,35 +514,16 @@ class WatchFaceView extends WatchUi.WatchFace {
             bars[i] = sum / wt;
         }
 
-        // Red only for stretches: runs of 2+ consecutive bars above the threshold.
-        var red = new Array<Boolean>[CHART_BARS];
-        for (var i = 0; i < CHART_BARS; i += 1) { red[i] = false; }
-        var a = 0;
-        while (a < CHART_BARS) {
-            if (bars[a] > STRESS_HIGH) {
-                var b = a;
-                while (b < CHART_BARS && bars[b] > STRESS_HIGH) { b += 1; }
-                if (b - a >= 2) {
-                    for (var k = a; k < b; k += 1) { red[k] = true; }
-                }
-                a = b;
-            } else {
-                a += 1;
-            }
-        }
-
         _stressBars   = bars;
-        _stressRed    = red;
         _stressBarsAt = now;
     }
 
-    // Small bar strip under the time: grey bars (older dimmer, newest brightest) with
-    // red stretches where stress stayed high. Rounded tops sit on a faint baseline.
+    // Small bar strip under the time: green where stress is low, red where it is high.
+    // Older bars are dimmer, the newest full strength; rounded tops on a faint baseline.
     private function drawStressChart(dc as Dc) as Void {
         refreshStressBars();
         var bars = _stressBars;
-        var red  = _stressRed;
-        if (bars == null || red == null) { return; }
+        if (bars == null) { return; }
 
         var bw    = 4;
         var gap   = 2;
@@ -555,19 +537,22 @@ class WatchFaceView extends WatchUi.WatchFace {
             var v = (bars as Array<Number>)[i];
             if (v < 0) { continue; }
             var h = 3 + (v * (_chartH - 3)) / 100;
-            if ((red as Array<Boolean>)[i]) {
-                var r = 0x70 + (0x60 * i) / last;            // 0x70 → 0xD0
-                dc.setColor((r << 16) | ((r / 5) << 8) | (r / 5), Graphics.COLOR_TRANSPARENT);
-            } else {
-                var g = 0x38 + (0x68 * i) / last;            // 0x38 → 0xA0
-                dc.setColor((g << 16) | (g << 8) | g, Graphics.COLOR_TRANSPARENT);
-            }
+            var f = 40 + (60 * i) / last;                    // age fade: 40% → 100%
+            dc.setColor(scaleColor((v > STRESS_HIGH) ? C_STRESSED : C_CALM, f), Graphics.COLOR_TRANSPARENT);
             dc.fillRoundedRectangle(x0 + i * (bw + gap), base - h, bw, h + 2, 2);
         }
         dc.clearClip();
 
         dc.setColor(0x2A2A2A, Graphics.COLOR_TRANSPARENT);
         dc.drawLine(x0 - 2, base, x0 + total + 1, base);
+    }
+
+    // Scale an RGB colour's brightness to pct percent.
+    private function scaleColor(c as Number, pct as Number) as Number {
+        var r = (((c >> 16) & 0xFF) * pct) / 100;
+        var g = (((c >> 8)  & 0xFF) * pct) / 100;
+        var b = ((c         & 0xFF) * pct) / 100;
+        return (r << 16) | (g << 8) | b;
     }
 
     private function drawBottomMetrics(dc as Dc, info as ActivityMonitor.Info) as Void {
