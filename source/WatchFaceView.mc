@@ -94,7 +94,7 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const CHART_REFRESH as Number = 600;
     private const STRESS_HIGH   as Number = 50;    // bars above this are red, the rest green
     private const C_CALM        as Number = 0x1F8A48;
-    private const C_STRESSED    as Number = 0xE04040;
+    private const C_STRESSED    as Number = 0xB03535;
     private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
     private const DOM_FONT as Graphics.FontDefinition = Graphics.FONT_SMALL;
     private const GAP     as Number = 12;
