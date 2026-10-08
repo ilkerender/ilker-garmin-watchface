@@ -18,10 +18,14 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const C_PRIMARY as Number = 0xFFFFFF;
     private const C_LABEL   as Number = 0x8C8C8C;
     private const C_ICON    as Number = 0xB0B0B0;
-    private const C_DIVIDER as Number = 0x2E2E2E;
     private const C_AOD     as Number = 0xAAAAAA;
     private const C_RED     as Number = 0xAA2222;
-    private const C_BATTLOW as Number = C_RED;
+    private const C_GREEN   as Number = 0x00AA44;
+    private const C_YELLOW  as Number = 0xCCAA00;
+    private const C_AMBER   as Number = 0xE0A010;
+    private const C_CORE    as Number = 0x3C8CFF;   // workout core in the header rings
+    private const C_NONE    as Number = 0x3A3A3A;   // no-data ring / empty core outline
+    private const C_TRACK   as Number = 0x1C1C1C;
 
     // ── Screen geometry (resolved in onLayout) ─────────────────────────────
     private var _w as Number = 390;
@@ -38,8 +42,11 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _hHdr  as Number = 0;
     private var _hLbl  as Number = 0;
     private var _hVal  as Number = 0;
-    private var _hTime as Number = 0;
-    private var _timeFont as Graphics.FontDefinition = Graphics.FONT_NUMBER_THAI_HOT;
+    private var _timeDy as Number = 0;      // digit centre relative to font-box centre
+    private var _chartH as Number = 14;
+    private var _hDow  as Number = 0;
+    private var _hDom  as Number = 0;
+    private var _timeFont as Graphics.FontType = Graphics.FONT_NUMBER_THAI_HOT;
 
     private var _yHeader  as Number = 30;
     private var _yTopLbl  as Number = 70;
@@ -48,11 +55,17 @@ class WatchFaceView extends WatchUi.WatchFace {
     private var _yTime    as Number = 195;
     private var _yDateTop as Number = 178;
     private var _yDateBot as Number = 210;
+    private var _yChart   as Number = 250;   // top of the stress strip
     private var _yDiv2    as Number = 262;
     private var _yBotVal  as Number = 300;
     private var _yBotLbl  as Number = 328;
 
     private var _isAwake as Boolean = true;
+
+    private var _stressBars   as Array<Number>?  = null;   // smoothed 0-100, or -1 for no data
+    private var _stressBarsAt as Number         = 0;
+    private var _highSecs     as Number         = 0;       // seconds in Garmin's "high" stress band since midnight
+    private var _stressSeen   as Boolean        = false;   // any stress sample received
 
     // RHR history — persisted daily in Application.Storage
     private const RHR_KEY  as String            = "rhrHist";
@@ -61,13 +74,33 @@ class WatchFaceView extends WatchUi.WatchFace {
     // Last-known-good sensor values, to ride out SensorHistory gaps
     private var _bodyBatt   as Number? = null;
     private var _bodyBattAt as Number  = 0;
-    private var _stress     as Number? = null;
-    private var _stressAt   as Number  = 0;
     private var _sleep      as Number? = null;
     private var _sleepAt    as Number  = 0;
     private const STALE_SECS as Number = 7200;
 
-    private const PAD     as Number = 2;
+    private const PAD      as Number = 2;
+    private const HAIR_PAD as Number = 8;   // metric value row → hairline
+    private const LBL_GAP  as Number = 2;   // metric label row ↔ value row
+    // Number fonts reserve a lot of empty space above/below the digits. The layout
+    // is sized by the digits themselves: digit height ≈ INK_PCT % of the font ascent,
+    // sitting on the baseline (measured on THAI_HOT/HOT).
+    private const INK_PCT as Number = 69;
+    private const TPAD    as Number = 8;     // hairline → digits
+    private const TGAP    as Number = 8;     // digits → chart
+
+    // 24h stress strip under the time
+    private const CHART_BARS as Number = 48;
+    private const CHART_MIN  as Number = 14;
+    private const CHART_MAX  as Number = 36;
+    private const CHART_GAP  as Number = 8;     // chart bottom → hairline
+    private const CHART_SECS as Number = 86400;
+    private const CHART_REFRESH as Number = 600;
+    private const STRESS_HIGH   as Number = 50;    // bars above this are red, the rest green
+    private const STRESS_BAND   as Number = 75;    // Garmin's "high" band is 76-100: counted in the STR total
+    private const C_CALM        as Number = 0x1F8A48;
+    private const C_STRESSED    as Number = 0xB03535;
+    private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
+    private const DOM_FONT as Graphics.FontDefinition = Graphics.FONT_SMALL;
     private const GAP     as Number = 12;
     private const COLGAP  as Number = 16;
     private const DAY_NAMES as Array<String> = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as Array<String>;
@@ -85,63 +118,104 @@ class WatchFaceView extends WatchUi.WatchFace {
         _hLbl = Graphics.getFontHeight(Graphics.FONT_XTINY);
         _hVal = Graphics.getFontHeight(Graphics.FONT_TINY);    // metric values + date day
 
-        var inset   = _h / 16;
+        _hDow = Graphics.getFontHeight(DOW_FONT);
+        _hDom = Graphics.getFontHeight(DOM_FONT);
+
+        var inset   = _h / 24;
         var safeTop = inset;
         var safeBot = _h - inset;
         var safeH   = safeBot - safeTop;
 
-        // Largest number font whose full stack fits the vertical safe band.
+        // Everything except the time digits and the chart.
+        var fixed = _hHdr + PAD + _hLbl + LBL_GAP + _hVal + HAIR_PAD + 1 + TPAD
+                  + TGAP + CHART_GAP + 1 + HAIR_PAD + _hVal + LBL_GAP + _hLbl;
+        var avail = safeH - fixed;            // shared by time digits + chart
+
+        // Widest the time may be, leaving room for the date block beside it.
+        var wDow    = dc.getTextWidthInPixels("WED", DOW_FONT);
+        var wDom    = dc.getTextWidthInPixels("88",  DOM_FONT);
+        var dateW   = (wDow > wDom) ? wDow : wDom;
+        var widthCap = (chordHalf(_h / 2) * 2 * 94) / 100 - GAP - dateW;
+        var inkCap   = avail - CHART_MIN;
+
+        // Built-in fallback: largest number font whose digits fit.
         var candidates = [
             Graphics.FONT_NUMBER_THAI_HOT,
             Graphics.FONT_NUMBER_HOT,
             Graphics.FONT_NUMBER_MEDIUM
         ] as Array<Graphics.FontDefinition>;
 
-        _timeFont = candidates[candidates.size() - 1];
-        _hTime    = Graphics.getFontHeight(_timeFont);
+        var baseFont = candidates[candidates.size() - 1];
         for (var i = 0; i < candidates.size(); i += 1) {
-            var ht = Graphics.getFontHeight(candidates[i]);
-            if (stackHeight(ht) <= safeH) {
-                _timeFont = candidates[i];
-                _hTime    = ht;
+            if (inkOf(candidates[i]) <= inkCap
+                && dc.getTextWidthInPixels("00:00", candidates[i]) <= widthCap) {
+                baseFont = candidates[i];
                 break;
             }
         }
+        _timeFont = baseFont;
+        var inkH = inkOf(baseFont);
 
-        // Pin the TIME to the exact vertical center (widest chord), then flow
-        // the rest of the stack outward from there.
-        var toTimeCenter = _hHdr + PAD + _hLbl + 4 + _hVal + PAD + 1 + PAD + _hTime / 2;
+        // CIQ 5.1+: rescale the biggest font to exactly fill the height / width
+        // budget (glyphs keep their look). Older devices keep the built-in size.
+        if (Graphics has :getVectorFont) {
+            var f0  = candidates[0];
+            var sH  = inkCap.toFloat() / inkOf(f0);
+            var sW  = widthCap.toFloat() / dc.getTextWidthInPixels("00:00", f0);
+            var s   = (sH < sW) ? sH : sW;
+            for (var n = 0; n < 4 && s >= 0.6; n += 1) {
+                try {
+                    var vf = Graphics.getVectorFont({:font => f0, :scale => s});
+                    if (vf != null) {
+                        var ink = inkOf(vf);
+                        if (ink <= inkCap && dc.getTextWidthInPixels("00:00", vf) <= widthCap) {
+                            if (ink > inkH) { _timeFont = vf; inkH = ink; }
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    break;      // keep the built-in font
+                }
+                s = s * 0.97;
+            }
+        }
+
+        _chartH = avail - inkH;
+        if (_chartH > CHART_MAX) { _chartH = CHART_MAX; }
+        _timeDy = Graphics.getFontAscent(_timeFont) - inkH / 2 - Graphics.getFontHeight(_timeFont) / 2;
+
+        // Pin the digits to the exact vertical centre (widest chord) where the
+        // stack allows, then flow the rest outward from there.
+        var total        = fixed + inkH + _chartH;
+        var toTimeCenter = _hHdr + PAD + _hLbl + LBL_GAP + _hVal + HAIR_PAD + 1 + TPAD + inkH / 2;
         var y = _h / 2 - toTimeCenter;
-        if (y < safeTop) { y = safeTop; }
+        if (y < safeTop)           { y = safeTop; }
+        if (y + total > safeBot)   { y = safeBot - total; }
 
         _yHeader = y + _hHdr / 2;            y += _hHdr + PAD;
-        _yTopLbl = y + _hLbl / 2;            y += _hLbl + 4;
-        _yTopVal = y + _hVal / 2;            y += _hVal + PAD;
-        _yDiv1   = y;                        y += 1 + PAD;
-        _yTime   = y + _hTime / 2;
-        _yDateTop = _yTime - _hVal / 2;
-        _yDateBot = _yTime + _hHdr / 2;      y += _hTime + PAD;
-        _yDiv2   = y;                        y += 1 + PAD;
-        _yBotVal = y + _hVal / 2;            y += _hVal + 4;
+        _yTopLbl = y + _hLbl / 2;            y += _hLbl + LBL_GAP;
+        _yTopVal = y + _hVal / 2;            y += _hVal + HAIR_PAD;
+        _yDiv1   = y;                        y += 1 + TPAD;
+        _yTime   = y + inkH / 2;             // centre of the digits
+        _yDateTop = _yTime - _hDom / 2;
+        _yDateBot = _yTime + _hDow / 2;      y += inkH + TGAP;
+        _yChart  = y;                        y += _chartH + CHART_GAP;
+        _yDiv2   = y;                        y += 1 + HAIR_PAD;
+        _yBotVal = y + _hVal / 2;            y += _hVal + LBL_GAP;
         _yBotLbl = y + _hLbl / 2;
 
         // Solve each metric band's outer-column offset from measured widths.
         // Top band measured at the values row; bottom at the icon row (lowest).
         var sTop = solveSpread(dc, "88888", "88.88", "8888", _yTopVal, 0, Graphics.FONT_TINY);
-        var sBot = solveSpread(dc, "88", "888", "100%", _yBotLbl, 12, Graphics.FONT_TINY);
+        var sBot = solveSpread(dc, "888", "888", "100%", _yBotLbl, 12, Graphics.FONT_TINY);
         _cxLtop = _cxM - sTop;  _cxRtop = _cxM + sTop;
         _cxLbot = _cxM - sBot;  _cxRbot = _cxM + sBot;
 
     }
 
-    // Stack height for a candidate time-font height.
-    private function stackHeight(hTime as Number) as Number {
-        return _hHdr + PAD
-             + _hLbl + 4 + _hVal + PAD
-             + 1 + PAD
-             + hTime + PAD
-             + 1 + PAD
-             + _hVal + 4 + _hLbl;
+    // Height of the digits of a number font (they sit on the baseline).
+    private function inkOf(font as Graphics.FontType) as Number {
+        return Graphics.getFontAscent(font) * INK_PCT / 100;
     }
 
     // Outer-column offset bounded by: lower = no overlap with center column,
@@ -206,11 +280,12 @@ class WatchFaceView extends WatchUi.WatchFace {
         var actInfo = ActivityMonitor.getInfo();
         drawHeader(dc, actInfo);
         drawTopMetrics(dc, actInfo, distanceUnits);
-        drawVerticalDividers(dc);
         drawHairline(dc, _yDiv1);
         drawTimeBand(dc, System.getClockTime(), C_PRIMARY, 0, 0, is24h);
+        drawStressChart(dc);
         drawHairline(dc, _yDiv2);
         drawBottomMetrics(dc, actInfo);
+        drawBezelArcs(dc, actInfo);
     }
 
     private function drawAOD(dc as Dc, is24h as Boolean) as Void {
@@ -222,13 +297,8 @@ class WatchFaceView extends WatchUi.WatchFace {
     private function burnY(ct as System.ClockTime) as Number { return (ct.min % 4) - 2; }
 
     private function drawHeader(dc as Dc, today as ActivityMonitor.Info) as Void {
-        var C_GREEN  = 0x00AA44;
-        var C_YELLOW = 0xCCAA00;
 
-        var C_RING   = 0x606060; // bright enough to see on real AMOLED
-        var C_EMPTY  = 0x1A1A1A; // dim base so the dot shape is always visible
-        var dotR     = 8;
-        var spacing  = 20;
+        var spacing  = 24;
         var startX   = _cxM - spacing * 3;
         var cy       = _yHeader;
 
@@ -285,85 +355,51 @@ class WatchFaceView extends WatchUi.WatchFace {
             // Exercise: step goal met, OR vigorous ≥5 min, OR moderate ≥20 min
             var exercised = (steps >= stepGoal) || (vigorousMin >= 5) || (moderateMin >= 20);
 
-            // Top-half color from RHR (-1 → no fill)
-            var topColor = -1;
+            // Outer ring: RHR (green < 57, amber 57-64, red 65+; grey = no data).
+            // Core: filled when the day counts as a workout day.
+            // Today's ring is a little larger so it stands apart from the past six days.
+            var ringColor = C_NONE;
             if (restHR >= 0) {
-                if      (restHR < 57) { topColor = C_GREEN;  }
-                else if (restHR < 65) { topColor = C_YELLOW; }
-                else                  { topColor = C_RED;    }
+                if      (restHR < 57) { ringColor = C_GREEN; }
+                else if (restHR < 65) { ringColor = C_AMBER; }
+                else                  { ringColor = C_RED;   }
             }
+            var isToday = (i == 6);
+            var ringR   = isToday ? 10 : 8;
+            var coreR   = isToday ? 5 : 4;
 
-            // Always draw dim base so the dot is visible even with no data
-            dc.setColor(C_EMPTY, Graphics.COLOR_TRANSPARENT);
-            dc.fillCircle(cx, cy, dotR - 1);
+            dc.setPenWidth(2);
+            dc.setColor(ringColor, Graphics.COLOR_TRANSPARENT);
+            dc.drawCircle(cx, cy, ringR);
+            dc.setPenWidth(1);
 
-            // Outline ring
-            dc.setColor(C_RING, Graphics.COLOR_TRANSPARENT);
-            dc.drawCircle(cx, cy, dotR);
-
-            // Top half — RHR indicator
-            if (topColor >= 0) {
-                dc.setClip(cx - dotR, cy - dotR, dotR * 2 + 1, dotR);
-                dc.setColor(topColor, Graphics.COLOR_TRANSPARENT);
-                dc.fillCircle(cx, cy, dotR - 1);
-                dc.clearClip();
-            }
-
-            // Bottom half — exercise indicator
             if (exercised) {
-                dc.setClip(cx - dotR, cy, dotR * 2 + 1, dotR + 1);
-                dc.setColor(C_GREEN, Graphics.COLOR_TRANSPARENT);
-                dc.fillCircle(cx, cy, dotR - 1);
-                dc.clearClip();
+                dc.setColor(C_CORE, Graphics.COLOR_TRANSPARENT);
+                dc.fillCircle(cx, cy, coreR);
+            } else {
+                dc.setColor(C_NONE, Graphics.COLOR_TRANSPARENT);
+                dc.drawCircle(cx, cy, coreR);
             }
         }
     }
 
-    // Slim vertical line whose tips dissolve into the background.
-    private function drawFadingVLine(dc as Dc, x as Number, yTop as Number, yBot as Number) as Void {
-        var lineH = yBot - yTop;
-        if (lineH <= 2) { return; }
-        var fadeH = lineH / 3;
-        if (fadeH < 4) { fadeH = 4; }
-        var peak = 0x3C; // max brightness component (~60/255, subtle gray)
-        for (var y = yTop; y <= yBot; y++) {
-            var dy   = y - yTop;
-            var fromE = lineH - dy;
-            var dist = dy < fromE ? dy : fromE;
-            var b    = dist >= fadeH ? peak : peak * dist / fadeH;
-            if (b > 0) {
-                dc.setColor((b << 16) | (b << 8) | b, Graphics.COLOR_TRANSPARENT);
-                dc.fillRectangle(x, y, 1, 1);
-            }
-        }
-    }
-
-    private function drawVerticalDividers(dc as Dc) as Void {
-        // Top band: span from top of label row to bottom of value row
-        var tTop = _yTopLbl - _hLbl / 2 - 4;
-        var tBot = _yTopVal + _hVal / 2 + 4;
-        // Bottom band: span from top of value row to bottom of label row
-        var bTop = _yBotVal - _hVal / 2 - 4;
-        var bBot = _yBotLbl + _hLbl / 2 + 4;
-
-        // X: midpoint between adjacent column centers
-        var txL = (_cxLtop + _cxM) / 2;
-        var txR = (_cxM + _cxRtop) / 2;
-        var bxL = (_cxLbot + _cxM) / 2;
-        var bxR = (_cxM + _cxRbot) / 2;
-
-        drawFadingVLine(dc, txL, tTop, tBot);
-        drawFadingVLine(dc, txR, tTop, tBot);
-        drawFadingVLine(dc, bxL, bTop, bBot);
-        drawFadingVLine(dc, bxR, bTop, bBot);
-    }
-
+    // Horizontal rule whose ends dissolve into the background.
     private function drawHairline(dc as Dc, y as Number) as Void {
         var half = chordHalf(y);
         if (half <= 0) { return; }
         var inset = (half * 88) / 100;
-        dc.setColor(C_DIVIDER, C_BG);
-        dc.drawLine(_cxM - inset, y, _cxM + inset, y);
+        var x0    = _cxM - inset;
+        var len   = inset * 2;
+        var fadeW = len / 4;
+        var peak  = 0x30;
+        for (var i = 0; i < len; i += 3) {
+            var d = (i < len - i) ? i : len - i;
+            var b = (d >= fadeW) ? peak : peak * d / fadeW;
+            if (b > 0) {
+                dc.setColor((b << 16) | (b << 8) | b, Graphics.COLOR_TRANSPARENT);
+                dc.drawLine(x0 + i, y, x0 + i + 2, y);
+            }
+        }
     }
 
     private function drawTopMetrics(dc as Dc, info as ActivityMonitor.Info, distanceUnits as System.UnitsSystem) as Void {
@@ -376,14 +412,17 @@ class WatchFaceView extends WatchUi.WatchFace {
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var stepsStr = (info.steps instanceof Number) ? (info.steps as Number).toString() : "0";
+        var distStr  = buildDistStr(info, distanceUnits);
+        var bodyStr  = getBodyBatteryStr();
 
         dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cxLtop, _yTopVal, Graphics.FONT_TINY, stepsStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(_cxM, _yTopVal, Graphics.FONT_TINY, buildDistStr(info, distanceUnits),
+        dc.drawText(_cxM, _yTopVal, Graphics.FONT_TINY, distStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(_cxRtop, _yTopVal, Graphics.FONT_TINY, getBodyBatteryStr(),
+        dc.drawText(_cxRtop, _yTopVal, Graphics.FONT_TINY, bodyStr,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+
     }
 
     private function drawTimeBand(dc as Dc, clockTime as System.ClockTime,
@@ -404,105 +443,233 @@ class WatchFaceView extends WatchUi.WatchFace {
         var dom      = (today.day instanceof Number) ? (today.day as Number).format("%d") : "--";
 
         var timeW = dc.getTextWidthInPixels(timeStr, _timeFont);
-        var dowW  = dc.getTextWidthInPixels(dow, Graphics.FONT_XTINY);
-        var domW  = dc.getTextWidthInPixels(dom, Graphics.FONT_TINY);
+        var dowW  = dc.getTextWidthInPixels(dow, DOW_FONT);
+        var domW  = dc.getTextWidthInPixels(dom, DOM_FONT);
         var dateW = (dowW > domW) ? dowW : domW;
 
         var groupW = timeW + GAP + dateW;
         var startX = (_w - groupW) / 2 + xShift;
 
         dc.setColor(timeColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(startX, _yTime + yShift, _timeFont, timeStr,
+        dc.drawText(startX, _yTime + yShift - _timeDy, _timeFont, timeStr,
             Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var dateCx = startX + timeW + GAP + dateW / 2;
-        dc.drawText(dateCx, _yDateTop + yShift, Graphics.FONT_XTINY, dow,
+        dc.drawText(dateCx, _yDateTop + yShift, DOW_FONT, dow,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(dateCx, _yDateBot + yShift, Graphics.FONT_TINY, dom,
+        dc.drawText(dateCx, _yDateBot + yShift, DOM_FONT, dom,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
-    private function drawBottomMetrics(dc as Dc, info as ActivityMonitor.Info) as Void {
-        // Left — sleep score, falling back to stress (HRV-derived) if unavailable
-        var sleepStr  = "--";
-        var showStress = false;
+    // Average the last 24h of stress samples into CHART_BARS buckets (oldest first).
+    // Cached: a full pass reads several hundred samples, so redo it every few minutes.
+    private function refreshStressBars() as Void {
+        var now = Time.now().value();
+        if (_stressBars != null && (now - _stressBarsAt) < CHART_REFRESH) { return; }
 
-        if (_sleep != null && (Time.now().value() - _sleepAt) < STALE_SECS) {
-            sleepStr = (_sleep as Number).format("%d");
-        }
+        var sums   = new Array<Number>[CHART_BARS];
+        var counts = new Array<Number>[CHART_BARS];
+        for (var i = 0; i < CHART_BARS; i += 1) { sums[i] = 0; counts[i] = 0; }
 
-        if (sleepStr.equals("--")) {
-            var stress = getStressVal();
-            if (stress != null) {
-                sleepStr   = (stress as Number).format("%d");
-                showStress = true;
+        var gi          = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
+        var todayStart  = now - ((gi.hour as Number) * 3600 + (gi.min as Number) * 60 + (gi.sec as Number));
+        var highSecs    = 0;
+        var prevWhen    = -1;
+        var prevHigh    = false;
+
+        if ((Toybox has :SensorHistory) && (SensorHistory has :getStressHistory)) {
+            var iter = SensorHistory.getStressHistory({
+                :period => new Time.Duration(CHART_SECS),
+                :order  => SensorHistory.ORDER_OLDEST_FIRST
+            });
+            if (iter != null) {
+                var start  = now - CHART_SECS;
+                var sample = iter.next();
+                while (sample != null) {
+                    if (sample.data != null) {
+                        var t   = sample.when.value();
+                        var d   = (sample.data as Number).toNumber();
+                        var idx = ((t - start) * CHART_BARS) / CHART_SECS;
+                        if (idx < 0)           { idx = 0; }
+                        if (idx >= CHART_BARS) { idx = CHART_BARS - 1; }
+                        sums[idx]   += d;
+                        counts[idx] += 1;
+
+                        // Each high sample counts until the next one (capped at 10 min).
+                        if (prevHigh && prevWhen >= todayStart) {
+                            var dt = t - prevWhen;
+                            highSecs += (dt > 600) ? 600 : dt;
+                        }
+                        prevWhen = t;
+                        prevHigh = d > STRESS_BAND;
+                    }
+                    sample = iter.next();
+                }
             }
         }
 
-        dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cxLbot, _yBotVal, Graphics.FONT_TINY, sleepStr,
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        if (showStress) {
-            dc.setColor(C_LABEL, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_cxLbot, _yBotLbl, Graphics.FONT_XTINY, "STR",
-                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        } else {
-            drawMoonIcon(dc, _cxLbot, _yBotLbl);
+        if (prevHigh && prevWhen >= todayStart) {
+            var dt = now - prevWhen;
+            highSecs += (dt > 600) ? 600 : dt;
+        }
+        _highSecs   = highSecs;
+        _stressSeen = (prevWhen >= 0);
+
+        var raw = new Array<Number>[CHART_BARS];
+        for (var i = 0; i < CHART_BARS; i += 1) {
+            raw[i] = (counts[i] > 0) ? (sums[i] / counts[i]) : -1;
         }
 
-        dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cxM, _yBotVal, Graphics.FONT_TINY, getHrStr(),
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.setColor(C_LABEL, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cxM, _yBotLbl, Graphics.FONT_XTINY, "HR",
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        // Smooth with [1,2,1] over neighbours that have data so the strip reads as
+        // stretches rather than noise; hours without data stay empty.
+        var bars = new Array<Number>[CHART_BARS];
+        for (var i = 0; i < CHART_BARS; i += 1) {
+            if (raw[i] < 0) { bars[i] = -1; continue; }
+            var sum = raw[i] * 2;
+            var wt  = 2;
+            if (i > 0 && raw[i - 1] >= 0)               { sum += raw[i - 1]; wt += 1; }
+            if (i < CHART_BARS - 1 && raw[i + 1] >= 0)  { sum += raw[i + 1]; wt += 1; }
+            bars[i] = sum / wt;
+        }
+
+        _stressBars   = bars;
+        _stressBarsAt = now;
+    }
+
+    // Small bar strip under the time: green where stress is low, red where it is high.
+    // Older bars are dimmer; the newest is full strength and wider. Rounded tops sit on a
+    // faint baseline with clock ticks below it (tall at midnight, short at 06/12/18).
+    private function drawStressChart(dc as Dc) as Void {
+        refreshStressBars();
+        var bars = _stressBars;
+        if (bars == null) { return; }
+
+        var bw    = 4;
+        var gap   = 2;
+        var total = CHART_BARS * (bw + gap) - gap;
+        var x0    = _cxM - total / 2;
+        var base  = _yChart + _chartH;
+        var last  = CHART_BARS - 1;
+
+        dc.setClip(x0 - 1, _yChart, total + 4, _chartH);     // flat bottoms, rounded tops
+        for (var i = 0; i < CHART_BARS; i += 1) {
+            var v = (bars as Array<Number>)[i];
+            if (v < 0) { continue; }
+            var h = 3 + (v * (_chartH - 3)) / 100;
+            var f = 35 + (50 * i) / last;                    // age fade: 35% → 85%
+            var w = bw;
+            if (i == last) { f = 100; w = bw + 2; }          // "now" bar
+            dc.setColor(scaleColor((v > STRESS_HIGH) ? C_STRESSED : C_CALM, f), Graphics.COLOR_TRANSPARENT);
+            dc.fillRoundedRectangle(x0 + i * (bw + gap), base - h, w, h + 2, 2);
+        }
+        dc.clearClip();
+
+        dc.setColor(0x2A2A2A, Graphics.COLOR_TRANSPARENT);
+        dc.drawLine(x0 - 2, base, x0 + total + 3, base);
+
+        // Clock ticks, pinned to local time so they drift left as the day goes on.
+        var now    = _stressBarsAt;
+        var gi     = Gregorian.info(new Time.Moment(now), Time.FORMAT_SHORT);
+        var midnight = now - ((gi.hour as Number) * 3600 + (gi.min as Number) * 60 + (gi.sec as Number));
+        var start  = now - CHART_SECS;
+        for (var k = -4; k <= 3; k += 1) {
+            var t = midnight + k * 21600;                    // every 6 hours
+            if (t <= start || t > now) { continue; }
+            var x    = x0 + ((t - start) * total) / CHART_SECS;
+            var tall = (((k % 4) + 4) % 4) == 0;
+            dc.setColor(tall ? 0x707070 : 0x404040, Graphics.COLOR_TRANSPARENT);
+            dc.drawLine(x, base + 2, x, base + (tall ? 6 : 4));
+        }
+    }
+
+    // Minutes spent in the high stress band (above STRESS_BAND) since local midnight, e.g. "105".
+    private function getStressTimeStr() as String {
+        refreshStressBars();
+        if (!_stressSeen) { return "--"; }
+        return ((_highSecs + 30) / 60).toString();
+    }
+
+    // Scale an RGB colour's brightness to pct percent.
+    private function scaleColor(c as Number, pct as Number) as Number {
+        var r = (((c >> 16) & 0xFF) * pct) / 100;
+        var g = (((c >> 8)  & 0xFF) * pct) / 100;
+        var b = ((c         & 0xFF) * pct) / 100;
+        return (r << 16) | (g << 8) | b;
+    }
+
+    private function drawBottomMetrics(dc as Dc, info as ActivityMonitor.Info) as Void {
+        // Left — sleep score when available, otherwise time in high stress today
+        var leftStr    = "--";
+        var showStress = true;
+
+        if (_sleep != null && (Time.now().value() - _sleepAt) < STALE_SECS) {
+            leftStr    = (_sleep as Number).format("%d");
+            showStress = false;
+        } else {
+            leftStr = getStressTimeStr();
+        }
 
         var batt = System.getSystemStats().battery.toNumber();
+
+        drawMetric(dc, _cxLbot, _yBotVal, _yBotLbl, leftStr, showStress ? "STR" : "SLP");
+        drawMetric(dc, _cxM,    _yBotVal, _yBotLbl, getHrStr(), "HR");
+        drawMetric(dc, _cxRbot, _yBotVal, _yBotLbl, batt.toString() + "%", "BAT");
+    }
+
+    // Value (white) with its dim label.
+    private function drawMetric(dc as Dc, cx as Number, yVal as Number, yLbl as Number,
+                                value as String, label as String) as Void {
         dc.setColor(C_PRIMARY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cxRbot, _yBotVal, Graphics.FONT_TINY, batt.toString() + "%",
+        dc.drawText(cx, yVal, Graphics.FONT_TINY, value,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        drawBatteryIcon(dc, _cxRbot, _yBotLbl, batt);
-    }
-
-    // Crescent moon: filled circle with an offset filled circle cut out in bg colour
-    private function drawMoonIcon(dc as Dc, cx as Number, cy as Number) as Void {
-        var r  = 7;  // moon body radius
-        var ro = 6;  // cutout radius
-        var ox = 3;  // cutout x offset (shifts the shadow rightward)
-        var oy = -2; // cutout y offset (shifts shadow upward)
         dc.setColor(C_LABEL, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(cx, cy, r);
-        dc.setColor(C_BG, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(cx + ox, cy + oy, ro);
+        dc.drawText(cx, yLbl, Graphics.FONT_XTINY, label,
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
+    // Thin progress arcs hugging the bezel: steps on the left, battery on the right.
+    private function drawBezelArcs(dc as Dc, info as ActivityMonitor.Info) as Void {
+        var cx   = _w / 2;
+        var cy   = _h / 2;
+        var r    = _w / 2 - 5;
+        var half = 35;                  // arc half-span in degrees
+        var span = half * 2;
 
-
-    private function drawBatteryIcon(dc as Dc, cx as Number, cy as Number, pct as Number) as Void {
-        var bw = 24; var bh = 10;
-        var bx = cx - bw / 2; var by = cy - bh / 2;
-        dc.setColor(C_ICON, Graphics.COLOR_TRANSPARENT);
-        dc.drawRectangle(bx, by, bw, bh);
-        dc.fillRectangle(bx + bw, by + 3, 3, 4);
-        var fill = ((bw - 2) * pct / 100).toNumber();
-        if (fill > 0) {
-            dc.setColor(pct > 20 ? C_ICON : C_BATTLOW, Graphics.COLOR_TRANSPARENT);
-            dc.fillRectangle(bx + 1, by + 1, fill, bh - 2);
+        var stepPct = 0.0;
+        if ((info.steps instanceof Number) && (info.stepGoal instanceof Number)
+            && (info.stepGoal as Number) > 0) {
+            stepPct = (info.steps as Number).toFloat() / (info.stepGoal as Number);
+            if (stepPct > 1.0) { stepPct = 1.0; }
         }
+        var battPct = System.getSystemStats().battery / 100.0;
+        if (battPct > 1.0) { battPct = 1.0; }
+
+        dc.setPenWidth(4);
+        dc.setColor(C_TRACK, Graphics.COLOR_TRANSPARENT);
+        dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE,         180 + half, 180 - half);
+        dc.drawArc(cx, cy, r, Graphics.ARC_COUNTER_CLOCKWISE, 360 - half, half);
+
+        if (stepPct > 0.02) {
+            dc.setColor(stepPct >= 1.0 ? C_GREEN : C_ICON, Graphics.COLOR_TRANSPARENT);
+            dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, 180 + half,
+                       180 + half - (span * stepPct).toNumber());
+        }
+        if (battPct > 0.02) {
+            // Normal grey; yellow warning under 20%; red at 5% or below.
+            var battPctInt = System.getSystemStats().battery.toNumber();
+            var battColor  = C_ICON;
+            if (battPctInt <= 5)       { battColor = C_RED; }
+            else if (battPctInt < 20)  { battColor = C_YELLOW; }
+            dc.setColor(battColor, Graphics.COLOR_TRANSPARENT);
+            dc.drawArc(cx, cy, r, Graphics.ARC_COUNTER_CLOCKWISE, 360 - half,
+                       (360 - half + (span * battPct).toNumber()) % 360);
+        }
+        dc.setPenWidth(1);
     }
 
     private function readBodyBattery() as Number? {
         if ((Toybox has :SensorHistory) && (SensorHistory has :getBodyBatteryHistory)) {
             var iter   = SensorHistory.getBodyBatteryHistory({:period => 1, :order => SensorHistory.ORDER_NEWEST_FIRST});
-            var sample = iter.next();
-            if (sample != null && sample.data != null) { return sample.data as Number; }
-        }
-        return null;
-    }
-
-    private function readStress() as Number? {
-        if ((Toybox has :SensorHistory) && (SensorHistory has :getStressHistory)) {
-            var iter   = SensorHistory.getStressHistory({:period => 1, :order => SensorHistory.ORDER_NEWEST_FIRST});
             var sample = iter.next();
             if (sample != null && sample.data != null) { return sample.data as Number; }
         }
@@ -520,19 +687,6 @@ class WatchFaceView extends WatchUi.WatchFace {
             return (_bodyBatt as Number).format("%d");
         }
         return "--";
-    }
-
-    private function getStressVal() as Number? {
-        var fresh = readStress();
-        if (fresh != null) {
-            _stress   = fresh;
-            _stressAt = Time.now().value();
-            return fresh;
-        }
-        if (_stress != null && (Time.now().value() - _stressAt) < STALE_SECS) {
-            return _stress;
-        }
-        return null;
     }
 
     private function dayKey(m as Time.Moment) as String {
