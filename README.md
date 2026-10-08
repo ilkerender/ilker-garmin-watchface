@@ -30,7 +30,7 @@ Drag `venu3swatchface.prg` into that folder.
 **Step 4 — Eject and select**
 
 Safely eject the watch, then on the watch go to:
-**Settings → Watch Face** (or long-press the current watch face) and pick **Tactical Grid**.
+**Settings → Watch Face** (or long-press the current watch face) and pick **Venu3S Face**.
 
 That's it.
 
@@ -44,14 +44,14 @@ That's it.
 
 ## Features
 
-### Health dot row (top)
-Seven dots — one per day, today on the right — give you a week-at-a-glance health summary without numbers.
+### Week at a glance (top)
+Seven circles — one per day, today on the right and slightly larger — give you a week-at-a-glance health summary without numbers.
 
-- **Top half** — Resting heart rate colour: green `< 57 bpm` · yellow `57–59` · red `≥ 60`
-- **Bottom half** — Green when the day's step goal was met, or ≥ 5 vigorous / ≥ 20 moderate active minutes logged
+- **Outer ring** — resting heart rate: green `< 57 bpm` · amber `57–64` · red `≥ 65` · grey when there is no data
+- **Core** — filled blue on a workout day (step goal met, or ≥ 5 vigorous / ≥ 20 moderate active minutes), an outline otherwise
 
-> **Two things to know about the RHR dot colours:**
-> - **Fills in over time.** The watch records each day's RHR locally as you wear it. Past dots have no colour on a fresh install and gain colour going forward — expect a full week of colour after about seven days of wear.
+> **Two things to know about the RHR rings:**
+> - **Fills in over time.** The watch records each day's RHR locally as you wear it. Past rings are grey on a fresh install and gain colour going forward — expect a full week of colour after about seven days of wear.
 > - **Approximation.** The value used is Garmin's `averageRestingHeartRate` (a rolling average), not the exact per-night RHR shown in the Garmin app. It's close, but not identical.
 
 ### Top metrics
@@ -59,15 +59,27 @@ Seven dots — one per day, today on the right — give you a week-at-a-glance h
 |------|--------|-------|
 | STP — steps | DIST — distance (km or mi) | BODY — body battery (0–100) |
 
-Slim fading vertical dividers separate each column.
-
 ### Time band (centre)
-Large time display (`FONT_NUMBER_THAI_HOT`) with a stacked date block (weekday + day of month) aligned to the right. Font size is auto-selected so the full layout always fits inside the round bezel.
+A large time with a stacked date block (weekday + day of month) to its right. The layout is sized by the height of the digits themselves — number fonts reserve about half their height as empty space — so the time is as large as the screen width allows. On watches with Connect IQ 5.1+ the number font is scaled to fit; older watches use the largest built-in size that fits.
+
+### 24-hour stress strip (under the time)
+48 small bars, one per 30 minutes of the last 24 hours, from Garmin's stress history.
+
+- **Green** when stress is low, **red** when it is high (above 50). Older bars are dimmer; the newest bar is full strength and wider, so it's easy to find "now".
+- **Ticks** under the baseline are pinned to the clock: a taller one at midnight and shorter ones at 06, 12 and 18, so you can say *when* a stretch of high stress happened.
+- Hours with no data stay empty. The strip refreshes every 10 minutes.
 
 ### Bottom metrics
 | Left | Centre | Right |
 |------|--------|-------|
-| Sleep score (or HRV stress fallback) + moon icon | HR — current heart rate | Battery % + icon |
+| STR — minutes in high stress today (or SLP — sleep score, when available) | HR — current heart rate | BAT — battery % |
+
+**STR** is the total time since midnight that your stress stayed in Garmin's *high* band (above 75), shown as a plain number of minutes. When the watch has a fresh sleep score, that is shown instead, labelled SLP.
+
+### Bezel arcs
+Two thin arcs hug the edge of the screen:
+- **Left** — steps toward your daily goal; turns green when you reach it
+- **Right** — battery; turns yellow under 20% and red at 5% or below
 
 ### Always-On Display (AOD)
 Dimmed time + date only, with per-minute pixel shift for burn-in protection.
@@ -77,11 +89,12 @@ Dimmed time + date only, with per-minute pixel shift for burn-in protection.
 - **Pure black background** — AMOLED pixel-off efficiency
 - **Circle-aware layout** — chord formula ensures no element clips the round bezel
 - **Graceful fallbacks** — every metric degrades to `--` rather than crashing
+- **Tuned on the Venu 3S** — other models compile and scale, but their spacing hasn't been checked on-device
 - **Strict type safety** — compiled with `monkeyC.typeCheckLevel: Strict`
 
 ## Supported devices
 
-All 59 round-screen Garmin watches with Connect IQ API 5.0+. The layout is fully dynamic — it adapts to any screen size from 208×208 to 454×454. Graceful fallbacks mean features like body battery, sleep score, and HRV simply show `--` on watches that don't have the relevant sensors.
+All 59 round-screen Garmin watches with Connect IQ API 5.0+. The layout is fully dynamic — it adapts to any screen size from 208×208 to 454×454. Graceful fallbacks mean features like body battery, sleep score, and stress simply show `--` on watches that don't have the relevant sensors.
 
 | Family | Models |
 |--------|--------|
