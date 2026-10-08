@@ -61,6 +61,8 @@ class WatchFaceView extends WatchUi.WatchFace {
 
     private var _stressBars   as Array<Number>?  = null;   // smoothed 0-100, or -1 for no data
     private var _stressBarsAt as Number         = 0;
+    private var _highSecs     as Number         = 0;       // seconds above STRESS_HIGH since midnight
+    private var _stressSeen   as Boolean        = false;   // any stress sample received
 
     // RHR history — persisted daily in Application.Storage
     private const RHR_KEY  as String            = "rhrHist";
@@ -69,8 +71,6 @@ class WatchFaceView extends WatchUi.WatchFace {
     // Last-known-good sensor values, to ride out SensorHistory gaps
     private var _bodyBatt   as Number? = null;
     private var _bodyBattAt as Number  = 0;
-    private var _stress     as Number? = null;
-    private var _stressAt   as Number  = 0;
     private var _sleep      as Number? = null;
     private var _sleepAt    as Number  = 0;
     private const STALE_SECS as Number = 7200;
@@ -203,7 +203,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         // Solve each metric band's outer-column offset from measured widths.
         // Top band measured at the values row; bottom at the icon row (lowest).
         var sTop = solveSpread(dc, "88888", "88.88", "8888", _yTopVal, 0, Graphics.FONT_TINY);
-        var sBot = solveSpread(dc, "88", "888", "100%", _yBotLbl, 12, Graphics.FONT_TINY);
+        var sBot = solveSpread(dc, "888", "888", "100%", _yBotLbl, 12, Graphics.FONT_TINY);
         _cxLtop = _cxM - sTop;  _cxRtop = _cxM + sTop;
         _cxLbot = _cxM - sBot;  _cxRbot = _cxM + sBot;
 
@@ -476,6 +476,12 @@ class WatchFaceView extends WatchUi.WatchFace {
         var counts = new Array<Number>[CHART_BARS];
         for (var i = 0; i < CHART_BARS; i += 1) { sums[i] = 0; counts[i] = 0; }
 
+        var gi          = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
+        var todayStart  = now - ((gi.hour as Number) * 3600 + (gi.min as Number) * 60 + (gi.sec as Number));
+        var highSecs    = 0;
+        var prevWhen    = -1;
+        var prevHigh    = false;
+
         if ((Toybox has :SensorHistory) && (SensorHistory has :getStressHistory)) {
             var iter = SensorHistory.getStressHistory({
                 :period => new Time.Duration(CHART_SECS),
@@ -486,16 +492,33 @@ class WatchFaceView extends WatchUi.WatchFace {
                 var sample = iter.next();
                 while (sample != null) {
                     if (sample.data != null) {
-                        var idx = ((sample.when.value() - start) * CHART_BARS) / CHART_SECS;
+                        var t   = sample.when.value();
+                        var d   = (sample.data as Number).toNumber();
+                        var idx = ((t - start) * CHART_BARS) / CHART_SECS;
                         if (idx < 0)           { idx = 0; }
                         if (idx >= CHART_BARS) { idx = CHART_BARS - 1; }
-                        sums[idx]   += (sample.data as Number).toNumber();
+                        sums[idx]   += d;
                         counts[idx] += 1;
+
+                        // Each high sample counts until the next one (capped at 10 min).
+                        if (prevHigh && prevWhen >= todayStart) {
+                            var dt = t - prevWhen;
+                            highSecs += (dt > 600) ? 600 : dt;
+                        }
+                        prevWhen = t;
+                        prevHigh = d > STRESS_HIGH;
                     }
                     sample = iter.next();
                 }
             }
         }
+
+        if (prevHigh && prevWhen >= todayStart) {
+            var dt = now - prevWhen;
+            highSecs += (dt > 600) ? 600 : dt;
+        }
+        _highSecs   = highSecs;
+        _stressSeen = (prevWhen >= 0);
 
         var raw = new Array<Number>[CHART_BARS];
         for (var i = 0; i < CHART_BARS; i += 1) {
@@ -519,7 +542,8 @@ class WatchFaceView extends WatchUi.WatchFace {
     }
 
     // Small bar strip under the time: green where stress is low, red where it is high.
-    // Older bars are dimmer, the newest full strength; rounded tops on a faint baseline.
+    // Older bars are dimmer; the newest is full strength and wider. Rounded tops sit on a
+    // faint baseline with clock ticks below it (tall at midnight, short at 06/12/18).
     private function drawStressChart(dc as Dc) as Void {
         refreshStressBars();
         var bars = _stressBars;
@@ -532,19 +556,42 @@ class WatchFaceView extends WatchUi.WatchFace {
         var base  = _yChart + _chartH;
         var last  = CHART_BARS - 1;
 
-        dc.setClip(x0 - 1, _yChart, total + 2, _chartH);     // flat bottoms, rounded tops
+        dc.setClip(x0 - 1, _yChart, total + 4, _chartH);     // flat bottoms, rounded tops
         for (var i = 0; i < CHART_BARS; i += 1) {
             var v = (bars as Array<Number>)[i];
             if (v < 0) { continue; }
             var h = 3 + (v * (_chartH - 3)) / 100;
-            var f = 40 + (60 * i) / last;                    // age fade: 40% → 100%
+            var f = 35 + (50 * i) / last;                    // age fade: 35% → 85%
+            var w = bw;
+            if (i == last) { f = 100; w = bw + 2; }          // "now" bar
             dc.setColor(scaleColor((v > STRESS_HIGH) ? C_STRESSED : C_CALM, f), Graphics.COLOR_TRANSPARENT);
-            dc.fillRoundedRectangle(x0 + i * (bw + gap), base - h, bw, h + 2, 2);
+            dc.fillRoundedRectangle(x0 + i * (bw + gap), base - h, w, h + 2, 2);
         }
         dc.clearClip();
 
         dc.setColor(0x2A2A2A, Graphics.COLOR_TRANSPARENT);
-        dc.drawLine(x0 - 2, base, x0 + total + 1, base);
+        dc.drawLine(x0 - 2, base, x0 + total + 3, base);
+
+        // Clock ticks, pinned to local time so they drift left as the day goes on.
+        var now    = _stressBarsAt;
+        var gi     = Gregorian.info(new Time.Moment(now), Time.FORMAT_SHORT);
+        var midnight = now - ((gi.hour as Number) * 3600 + (gi.min as Number) * 60 + (gi.sec as Number));
+        var start  = now - CHART_SECS;
+        for (var k = -4; k <= 3; k += 1) {
+            var t = midnight + k * 21600;                    // every 6 hours
+            if (t <= start || t > now) { continue; }
+            var x    = x0 + ((t - start) * total) / CHART_SECS;
+            var tall = (((k % 4) + 4) % 4) == 0;
+            dc.setColor(tall ? 0x707070 : 0x404040, Graphics.COLOR_TRANSPARENT);
+            dc.drawLine(x, base + 2, x, base + (tall ? 6 : 4));
+        }
+    }
+
+    // Minutes spent above the high-stress threshold since midnight, e.g. "105".
+    private function getStressTimeStr() as String {
+        refreshStressBars();
+        if (!_stressSeen) { return "--"; }
+        return ((_highSecs + 30) / 60).toString();
     }
 
     // Scale an RGB colour's brightness to pct percent.
@@ -556,25 +603,20 @@ class WatchFaceView extends WatchUi.WatchFace {
     }
 
     private function drawBottomMetrics(dc as Dc, info as ActivityMonitor.Info) as Void {
-        // Left — sleep score, falling back to stress if unavailable
-        var sleepStr   = "--";
-        var showStress = false;
+        // Left — sleep score when available, otherwise time in high stress today
+        var leftStr    = "--";
+        var showStress = true;
 
         if (_sleep != null && (Time.now().value() - _sleepAt) < STALE_SECS) {
-            sleepStr = (_sleep as Number).format("%d");
-        }
-
-        if (sleepStr.equals("--")) {
-            var stress = getStressVal();
-            if (stress != null) {
-                sleepStr   = (stress as Number).format("%d");
-                showStress = true;
-            }
+            leftStr    = (_sleep as Number).format("%d");
+            showStress = false;
+        } else {
+            leftStr = getStressTimeStr();
         }
 
         var batt = System.getSystemStats().battery.toNumber();
 
-        drawMetric(dc, _cxLbot, _yBotVal, _yBotLbl, sleepStr, showStress ? "STR" : "SLP");
+        drawMetric(dc, _cxLbot, _yBotVal, _yBotLbl, leftStr, showStress ? "STR" : "SLP");
         drawMetric(dc, _cxM,    _yBotVal, _yBotLbl, getHrStr(), "HR");
         drawMetric(dc, _cxRbot, _yBotVal, _yBotLbl, batt.toString() + "%", "BAT");
     }
@@ -639,15 +681,6 @@ class WatchFaceView extends WatchUi.WatchFace {
         return null;
     }
 
-    private function readStress() as Number? {
-        if ((Toybox has :SensorHistory) && (SensorHistory has :getStressHistory)) {
-            var iter   = SensorHistory.getStressHistory({:period => 1, :order => SensorHistory.ORDER_NEWEST_FIRST});
-            var sample = iter.next();
-            if (sample != null && sample.data != null) { return sample.data as Number; }
-        }
-        return null;
-    }
-
     private function getBodyBatteryStr() as String {
         var fresh = readBodyBattery();
         if (fresh != null) {
@@ -659,19 +692,6 @@ class WatchFaceView extends WatchUi.WatchFace {
             return (_bodyBatt as Number).format("%d");
         }
         return "--";
-    }
-
-    private function getStressVal() as Number? {
-        var fresh = readStress();
-        if (fresh != null) {
-            _stress   = fresh;
-            _stressAt = Time.now().value();
-            return fresh;
-        }
-        if (_stress != null && (Time.now().value() - _stressAt) < STALE_SECS) {
-            return _stress;
-        }
-        return null;
     }
 
     private function dayKey(m as Time.Moment) as String {
