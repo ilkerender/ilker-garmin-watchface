@@ -22,6 +22,9 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const C_RED     as Number = 0xAA2222;
     private const C_GREEN   as Number = 0x00AA44;
     private const C_YELLOW  as Number = 0xCCAA00;
+    private const C_AMBER   as Number = 0xE0A010;
+    private const C_CORE    as Number = 0x3C8CFF;   // workout core in the header rings
+    private const C_NONE    as Number = 0x3A3A3A;   // no-data ring / empty core outline
     private const C_TRACK   as Number = 0x1C1C1C;
 
     // ── Screen geometry (resolved in onLayout) ─────────────────────────────
@@ -295,10 +298,7 @@ class WatchFaceView extends WatchUi.WatchFace {
 
     private function drawHeader(dc as Dc, today as ActivityMonitor.Info) as Void {
 
-        var C_RING   = 0x606060; // bright enough to see on real AMOLED
-        var C_EMPTY  = 0x1A1A1A; // dim base so the dot shape is always visible
-        var dotR     = 8;
-        var spacing  = 20;
+        var spacing  = 24;
         var startX   = _cxM - spacing * 3;
         var cy       = _yHeader;
 
@@ -355,36 +355,30 @@ class WatchFaceView extends WatchUi.WatchFace {
             // Exercise: step goal met, OR vigorous ≥5 min, OR moderate ≥20 min
             var exercised = (steps >= stepGoal) || (vigorousMin >= 5) || (moderateMin >= 20);
 
-            // Top-half color from RHR (-1 → no fill)
-            var topColor = -1;
+            // Outer ring: RHR (green < 57, amber 57-64, red 65+; grey = no data).
+            // Core: filled when the day counts as a workout day.
+            // Today's ring is a little larger so it stands apart from the past six days.
+            var ringColor = C_NONE;
             if (restHR >= 0) {
-                if      (restHR < 57) { topColor = C_GREEN;  }
-                else if (restHR < 65) { topColor = C_YELLOW; }
-                else                  { topColor = C_RED;    }
+                if      (restHR < 57) { ringColor = C_GREEN; }
+                else if (restHR < 65) { ringColor = C_AMBER; }
+                else                  { ringColor = C_RED;   }
             }
+            var isToday = (i == 6);
+            var ringR   = isToday ? 10 : 8;
+            var coreR   = isToday ? 5 : 4;
 
-            // Always draw dim base so the dot is visible even with no data
-            dc.setColor(C_EMPTY, Graphics.COLOR_TRANSPARENT);
-            dc.fillCircle(cx, cy, dotR - 1);
+            dc.setPenWidth(2);
+            dc.setColor(ringColor, Graphics.COLOR_TRANSPARENT);
+            dc.drawCircle(cx, cy, ringR);
+            dc.setPenWidth(1);
 
-            // Outline ring
-            dc.setColor(C_RING, Graphics.COLOR_TRANSPARENT);
-            dc.drawCircle(cx, cy, dotR);
-
-            // Top half — RHR indicator
-            if (topColor >= 0) {
-                dc.setClip(cx - dotR, cy - dotR, dotR * 2 + 1, dotR);
-                dc.setColor(topColor, Graphics.COLOR_TRANSPARENT);
-                dc.fillCircle(cx, cy, dotR - 1);
-                dc.clearClip();
-            }
-
-            // Bottom half — exercise indicator
             if (exercised) {
-                dc.setClip(cx - dotR, cy, dotR * 2 + 1, dotR + 1);
-                dc.setColor(C_GREEN, Graphics.COLOR_TRANSPARENT);
-                dc.fillCircle(cx, cy, dotR - 1);
-                dc.clearClip();
+                dc.setColor(C_CORE, Graphics.COLOR_TRANSPARENT);
+                dc.fillCircle(cx, cy, coreR);
+            } else {
+                dc.setColor(C_NONE, Graphics.COLOR_TRANSPARENT);
+                dc.drawCircle(cx, cy, coreR);
             }
         }
     }
