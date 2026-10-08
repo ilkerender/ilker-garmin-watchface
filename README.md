@@ -8,16 +8,25 @@ A minimalist, AMOLED-optimised watch face for the **Garmin Venu 3S** built with 
 
 ## Install on your watch (no coding required)
 
-You need a **Garmin Venu 3S**. No computer tools, no accounts — just a USB cable.
+You need one of the watches below. No computer tools, no accounts — just a USB cable.
 
-**Step 1 — Download the file**
+**Step 1 — Download the file for your watch**
 
-Download [`venu3swatchface.prg`](venu3swatchface.prg) from this page.
+| Watch | Download |
+|-------|----------|
+| Garmin Venu 3S | [`venu3swatchface.prg`](venu3swatchface.prg) |
+| Garmin Venu 4 41mm | [`venu3swatchface_venu441mm.prg`](builds/venu3swatchface_venu441mm.prg) |
+| Garmin Venu 4 45mm | [`venu3swatchface_venu445mm.prg`](builds/venu3swatchface_venu445mm.prg) |
+| Garmin vívoactive 5 | [`venu3swatchface_vivoactive5.prg`](builds/venu3swatchface_vivoactive5.prg) |
+| Garmin vívoactive 6 | [`venu3swatchface_vivoactive6.prg`](builds/venu3swatchface_vivoactive6.prg) |
+
+A `.prg` only runs on the watch it was built for, so pick your exact model. Other supported watches (see [Supported devices](#supported-devices)) can be built from source — see [Building](#building).
+
 (Click the filename → click the download button in the top-right corner of the file preview.)
 
 **Step 2 — Connect your watch**
 
-Plug your Venu 3S into your computer with its USB charging cable. Your watch will appear as a drive — like a USB stick — in Finder (Mac) or File Explorer (Windows).
+Plug your watch into your computer with its USB charging cable. Your watch will appear as a drive — like a USB stick — in Finder (Mac) or File Explorer (Windows).
 
 **Step 3 — Copy the file**
 
@@ -25,7 +34,7 @@ Open the watch drive and navigate to:
 ```
 GARMIN → Apps
 ```
-Drag `venu3swatchface.prg` into that folder.
+Drag the file you downloaded into that folder.
 
 **Step 4 — Eject and select**
 
