@@ -61,7 +61,7 @@ class WatchFaceView extends WatchUi.WatchFace {
 
     private var _stressBars   as Array<Number>?  = null;   // smoothed 0-100, or -1 for no data
     private var _stressBarsAt as Number         = 0;
-    private var _highSecs     as Number         = 0;       // seconds above STRESS_HIGH since midnight
+    private var _highSecs     as Number         = 0;       // seconds in Garmin's "high" stress band since midnight
     private var _stressSeen   as Boolean        = false;   // any stress sample received
 
     // RHR history — persisted daily in Application.Storage
@@ -93,6 +93,7 @@ class WatchFaceView extends WatchUi.WatchFace {
     private const CHART_SECS as Number = 86400;
     private const CHART_REFRESH as Number = 600;
     private const STRESS_HIGH   as Number = 50;    // bars above this are red, the rest green
+    private const STRESS_BAND   as Number = 75;    // Garmin's "high" band is 76-100: counted in the STR total
     private const C_CALM        as Number = 0x1F8A48;
     private const C_STRESSED    as Number = 0xB03535;
     private const DOW_FONT as Graphics.FontDefinition = Graphics.FONT_TINY;
@@ -506,7 +507,7 @@ class WatchFaceView extends WatchUi.WatchFace {
                             highSecs += (dt > 600) ? 600 : dt;
                         }
                         prevWhen = t;
-                        prevHigh = d > STRESS_HIGH;
+                        prevHigh = d > STRESS_BAND;
                     }
                     sample = iter.next();
                 }
@@ -587,7 +588,7 @@ class WatchFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // Minutes spent above the high-stress threshold since midnight, e.g. "105".
+    // Minutes spent in the high stress band (above STRESS_BAND) since local midnight, e.g. "105".
     private function getStressTimeStr() as String {
         refreshStressBars();
         if (!_stressSeen) { return "--"; }
