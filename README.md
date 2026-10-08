@@ -40,7 +40,7 @@ That's it.
 
 | Simulator | On the Wrist |
 |:---------:|:------------:|
-| ![Simulator](WATCH1.png) | ![On wrist](WATCH2.png) |
+| ![Simulator](WATCH1.png) | ![On wrist](WATCH2.jpeg) |
 
 ## Features
 
